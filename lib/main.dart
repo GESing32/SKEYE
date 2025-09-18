@@ -44,12 +44,12 @@ class _GcsHomeState extends State<GcsHome> {
   StreamSubscription? sub;
 
   // Change to your RPi or host IP/name
-  String wsUrl = "ws://192.168.1.100:8765";
+  String wsUrl = "ws://192.168.1.18:8765";
 
   List<LatLng> mission = [];
   bool missionMode = false;
 
-  LatLng defaultCenter = const LatLng(38.2527, -85.7585); // Louisville
+  LatLng defaultCenter = const LatLng(38.0308, -84.506); // Louisville
   LatLng get mapCenter => tel.pos ?? defaultCenter;
 
   @override
@@ -291,7 +291,10 @@ class _GcsHomeState extends State<GcsHome> {
         PopupMenuItem(value: "ALT_HOLD", child: Text("ALT_HOLD")),
         PopupMenuItem(value: "STABILIZE", child: Text("STABILIZE")),
       ],
-      child: const ElevatedButton(child: Text("Mode")),
+      child: ElevatedButton(
+        onPressed: () {}, // Provide a valid onPressed callback
+        child: const Text("Mode"),
+      ),
     );
   }
 

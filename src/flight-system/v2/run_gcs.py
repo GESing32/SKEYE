@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import signal
+import serial
 from typing import Any, Dict, Set
 
 import websockets
@@ -102,7 +103,7 @@ async def handle_client(ws, _path, core: MavSerialCore, hub: WebSocketHub):
         log.info("Client disconnected")
 
 async def main():
-    serial_dev = os.environ.get("GCS_SERIAL", "/dev/ttyUSB0")
+    serial_dev = os.environ.get("GCS_SERIAL", "COM4")   #"/dev/ttyUSB0"
     baud = int(os.environ.get("GCS_BAUD", "57600"))
     ws_host = os.environ.get("GCS_WS_HOST", "0.0.0.0")
     ws_port = int(os.environ.get("GCS_WS_PORT", "8765"))
@@ -114,14 +115,14 @@ async def main():
     server = await websockets.serve(lambda ws, path: handle_client(ws, path, core, hub), ws_host, ws_port)
     log.info(f"WebSocket server on ws://{ws_host}:{ws_port}")
 
-    loop = asyncio.get_event_loop()
-    stop = loop.create_future()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set_result, None)
-
+    # filepath: [run_gcs.py](http://_vscodecontentref_/3)
     tasks = [asyncio.create_task(telemetry_loop(core, hub))]
-    await stop
-    for t in tasks: t.cancel()
+    try:
+        await asyncio.Future()  # Run forever until interrupted
+    except KeyboardInterrupt:
+        log.info("Shutting down (KeyboardInterrupt)")
+    for t in tasks:
+        t.cancel()
     server.close()
     await server.wait_closed()
 
