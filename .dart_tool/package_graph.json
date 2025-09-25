@@ -38,12 +38,13 @@
     },
     {
       "name": "web_socket_channel",
-      "version": "2.4.5",
+      "version": "3.0.3",
       "dependencies": [
         "async",
         "crypto",
         "stream_channel",
-        "web"
+        "web",
+        "web_socket"
       ]
     },
     {
@@ -65,23 +66,26 @@
     },
     {
       "name": "flutter_map",
-      "version": "6.2.1",
+      "version": "8.2.2",
       "dependencies": [
         "async",
         "collection",
+        "dart_earcut",
+        "dart_polylabel2",
         "flutter",
         "http",
         "latlong2",
         "logger",
         "meta",
-        "polylabel",
+        "path",
+        "path_provider",
         "proj4dart",
-        "vector_math"
+        "uuid"
       ]
     },
     {
       "name": "flutter_lints",
-      "version": "2.0.3",
+      "version": "6.0.0",
       "dependencies": [
         "lints"
       ]
@@ -183,8 +187,15 @@
       ]
     },
     {
+      "name": "web_socket",
+      "version": "1.0.1",
+      "dependencies": [
+        "web"
+      ]
+    },
+    {
       "name": "web",
-      "version": "0.5.1",
+      "version": "1.1.1",
       "dependencies": []
     },
     {
@@ -222,6 +233,16 @@
       ]
     },
     {
+      "name": "uuid",
+      "version": "4.5.1",
+      "dependencies": [
+        "crypto",
+        "fixnum",
+        "meta",
+        "sprintf"
+      ]
+    },
+    {
       "name": "proj4dart",
       "version": "2.1.0",
       "dependencies": [
@@ -231,10 +252,15 @@
       ]
     },
     {
-      "name": "polylabel",
-      "version": "1.0.1",
+      "name": "path_provider",
+      "version": "2.1.5",
       "dependencies": [
-        "collection"
+        "flutter",
+        "path_provider_android",
+        "path_provider_foundation",
+        "path_provider_linux",
+        "path_provider_platform_interface",
+        "path_provider_windows"
       ]
     },
     {
@@ -245,8 +271,21 @@
       ]
     },
     {
+      "name": "dart_polylabel2",
+      "version": "1.0.0",
+      "dependencies": [
+        "collection",
+        "meta"
+      ]
+    },
+    {
+      "name": "dart_earcut",
+      "version": "1.2.0",
+      "dependencies": []
+    },
+    {
       "name": "lints",
-      "version": "2.1.1",
+      "version": "6.0.0",
       "dependencies": []
     },
     {
@@ -323,6 +362,16 @@
       ]
     },
     {
+      "name": "fixnum",
+      "version": "1.1.1",
+      "dependencies": []
+    },
+    {
+      "name": "sprintf",
+      "version": "7.0.0",
+      "dependencies": []
+    },
+    {
       "name": "wkt_parser",
       "version": "2.0.0",
       "dependencies": []
@@ -335,6 +384,52 @@
       ]
     },
     {
+      "name": "path_provider_windows",
+      "version": "2.3.0",
+      "dependencies": [
+        "ffi",
+        "flutter",
+        "path",
+        "path_provider_platform_interface"
+      ]
+    },
+    {
+      "name": "path_provider_platform_interface",
+      "version": "2.1.2",
+      "dependencies": [
+        "flutter",
+        "platform",
+        "plugin_platform_interface"
+      ]
+    },
+    {
+      "name": "path_provider_linux",
+      "version": "2.2.1",
+      "dependencies": [
+        "ffi",
+        "flutter",
+        "path",
+        "path_provider_platform_interface",
+        "xdg_directories"
+      ]
+    },
+    {
+      "name": "path_provider_foundation",
+      "version": "2.4.2",
+      "dependencies": [
+        "flutter",
+        "path_provider_platform_interface"
+      ]
+    },
+    {
+      "name": "path_provider_android",
+      "version": "2.2.18",
+      "dependencies": [
+        "flutter",
+        "path_provider_platform_interface"
+      ]
+    },
+    {
       "name": "vm_service",
       "version": "15.0.2",
       "dependencies": []
@@ -344,6 +439,31 @@
       "version": "0.3.1",
       "dependencies": [
         "lists"
+      ]
+    },
+    {
+      "name": "ffi",
+      "version": "2.1.4",
+      "dependencies": []
+    },
+    {
+      "name": "plugin_platform_interface",
+      "version": "2.1.8",
+      "dependencies": [
+        "meta"
+      ]
+    },
+    {
+      "name": "platform",
+      "version": "3.1.6",
+      "dependencies": []
+    },
+    {
+      "name": "xdg_directories",
+      "version": "1.1.0",
+      "dependencies": [
+        "meta",
+        "path"
       ]
     },
     {
