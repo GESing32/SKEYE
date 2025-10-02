@@ -146,6 +146,81 @@ class MavSerialCore:
             1, float(m_s), -1, 0, 0, 0, 0
         )
 
+    # -------- Camera control commands --------
+    def do_digicam_control(self, session: int = 0, zoom_pos: int = 0, zoom_step: int = 0,
+                           focus_lock: int = 0, shoot_command: int = 1, cmd_id: int = 0):
+        """
+        Control onboard camera (manual trigger).
+        MAV_CMD_DO_DIGICAM_CONTROL
+
+        Args:
+            session: Session control (0 = ignore)
+            zoom_pos: Zoom position (0 = ignore)
+            zoom_step: Zoom step (0 = ignore)
+            focus_lock: Focus lock (0 = ignore)
+            shoot_command: 1 = take photo, 0 = ignore
+            cmd_id: Command identity (0 = ignore)
+        """
+        self._ensure_targets()
+        self.m.mav.command_long_send(
+            self.target_system,
+            self.target_component,
+            mavutil.mavlink.MAV_CMD_DO_DIGICAM_CONTROL,
+            0,
+            float(session),
+            float(zoom_pos),
+            float(zoom_step),
+            float(focus_lock),
+            float(shoot_command),
+            float(cmd_id),
+            0.0
+        )
+        self.log.info(f"Camera control: shoot={shoot_command}")
+
+    def do_set_cam_trigg_dist(self, distance_m: float, shutter: float = 0.0, trigger_once: int = 1):
+        """
+        Set camera trigger distance (distance-based triggering).
+        MAV_CMD_DO_SET_CAM_TRIGG_DIST - QGC Survey default
+
+        Args:
+            distance_m: Distance between triggers in meters (0 = stop triggering)
+            shutter: Shutter integration time (0 = ignore)
+            trigger_once: 1 = trigger once immediately, 0 = don't
+        """
+        self._ensure_targets()
+        self.m.mav.command_long_send(
+            self.target_system,
+            self.target_component,
+            mavutil.mavlink.MAV_CMD_DO_SET_CAM_TRIGG_DIST,
+            0,
+            float(distance_m),
+            float(shutter),
+            float(trigger_once),
+            0.0, 0.0, 0.0, 0.0
+        )
+        self.log.info(f"Camera trigger distance set: {distance_m}m")
+
+    def do_set_cam_trigg_interval(self, interval_s: float, count: int = 0):
+        """
+        Set camera trigger interval (time-based triggering).
+        MAV_CMD_DO_SET_CAM_TRIGG_INTERVAL
+
+        Args:
+            interval_s: Time between triggers in seconds (-1 = stop triggering)
+            count: Number of photos to take (0 = unlimited)
+        """
+        self._ensure_targets()
+        self.m.mav.command_long_send(
+            self.target_system,
+            self.target_component,
+            mavutil.mavlink.MAV_CMD_DO_SET_CAM_TRIGG_INTERVAL,
+            0,
+            float(interval_s),
+            float(count),
+            0.0, 0.0, 0.0, 0.0, 0.0
+        )
+        self.log.info(f"Camera trigger interval set: {interval_s}s, count={count}")
+
     # -------- Mission upload (INT) --------
     def mission_clear_all(self):
         self._ensure_targets()

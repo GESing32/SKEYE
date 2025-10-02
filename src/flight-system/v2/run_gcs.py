@@ -5,10 +5,11 @@ import os
 import signal
 import serial
 import time
-from typing import Any, Dict, Set, Optional
+from typing import Any, Dict, Set, Optional, List
 
 import websockets
 from gcs_core import MavSerialCore, RELAY_TYPES
+from survey_planner import SurveyPlanner, Camera
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("GCS")
@@ -96,6 +97,10 @@ async def connection_monitor(connection_manager: ConnectionManager):
         await asyncio.sleep(1.0)  # Check connection every second
 
 async def telemetry_loop(core: MavSerialCore, hub: WebSocketHub, queue: MessageQueue):
+    """
+    Optimized telemetry loop with non-blocking serial reads.
+    Uses thread pool executor to prevent blocking the event loop.
+    """
     last_sent = {}
     min_period = {
         "HEARTBEAT": 1.0,
@@ -110,16 +115,19 @@ async def telemetry_loop(core: MavSerialCore, hub: WebSocketHub, queue: MessageQ
         "MISSION_CURRENT": 0.5,
     }
     loop = asyncio.get_event_loop()
+
     while True:
         try:
-            msg = core.recv_once()
+            # Run blocking serial read in thread pool to avoid blocking event loop
+            msg = await loop.run_in_executor(None, core.recv_once)
+
             if msg:
                 core.process_protocol_side_effects(msg)
                 t = msg["type"]
                 if t in RELAY_TYPES:
                     # Add message to queue regardless of broadcast timing
                     await queue.put(msg)
-                    
+
                     # Broadcast based on rate limiting
                     last = last_sent.get(t, 0.0)
                     period = min_period.get(t, 0.5)
@@ -127,9 +135,12 @@ async def telemetry_loop(core: MavSerialCore, hub: WebSocketHub, queue: MessageQ
                     if now - last >= period:
                         await hub.broadcast(msg)
                         last_sent[t] = now
+            else:
+                # No message available, short sleep to prevent tight loop
+                await asyncio.sleep(0.01)
         except Exception as e:
             log.warning(f"telemetry loop error: {e}")
-        await asyncio.sleep(0.01)
+            await asyncio.sleep(0.1)  # Longer sleep on error
 
 async def handle_client(ws, _path, core: MavSerialCore, hub: WebSocketHub):
     hub.clients.add(ws)
@@ -169,6 +180,44 @@ async def handle_client(ws, _path, core: MavSerialCore, hub: WebSocketHub):
                     core.mission_upload_begin(items)
                 elif c == "mission_start":
                     core.mission_start(int(cmd.get("first_item", 0)), int(cmd.get("last_item", 0xFFFF)))
+                elif c == "survey_plan":
+                    # Generate survey mission from polygon
+                    polygon = cmd.get("polygon", [])  # List of {"lat": x, "lon": y}
+                    camera_config = cmd.get("camera", {})
+                    altitude = float(cmd.get("altitude", 50.0))
+                    overlap_front = float(cmd.get("overlap_front", 75.0))
+                    overlap_side = float(cmd.get("overlap_side", 65.0))
+                    grid_angle = float(cmd.get("grid_angle", 0.0))
+                    hover_and_capture = bool(cmd.get("hover_and_capture", False))
+
+                    # Create camera from config or use default
+                    camera = Camera(
+                        name=camera_config.get("name", "Custom"),
+                        sensor_width=float(camera_config.get("sensor_width", 6.17)),
+                        sensor_height=float(camera_config.get("sensor_height", 4.55)),
+                        focal_length=float(camera_config.get("focal_length", 4.15)),
+                        image_width=int(camera_config.get("image_width", 4000)),
+                        image_height=int(camera_config.get("image_height", 3000))
+                    )
+
+                    planner = SurveyPlanner(camera)
+                    result = planner.generate_survey(
+                        polygon=[(p["lat"], p["lon"]) for p in polygon],
+                        altitude_rel=altitude,
+                        overlap_front=overlap_front,
+                        overlap_side=overlap_side,
+                        grid_angle_deg=grid_angle,
+                        hover_and_capture=hover_and_capture
+                    )
+
+                    # Send back mission items and statistics
+                    await ws.send(json.dumps({
+                        "type": "SURVEY_RESULT",
+                        "items": result["mission_items"],
+                        "statistics": result["statistics"],
+                        "transects": result["transects"]
+                    }))
+                    continue
                 else:
                     await ws.send(json.dumps({"type": "ERROR", "message": f"unknown cmd {c}"}))
                     continue
