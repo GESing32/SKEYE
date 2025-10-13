@@ -360,7 +360,6 @@ Calculated Results:
 - ✅ Troubleshooting guide
 
 **Breaking Changes:**
-- Removed generic camera presets (Smartphone, GoPro, Sony)
 - Sentera Double 4K (8mm Wide) is now the only supported camera
 - Simplified configuration - single camera preset
 

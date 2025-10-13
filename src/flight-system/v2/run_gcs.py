@@ -4,12 +4,13 @@ import logging
 import os
 import signal
 import serial
+import serial.tools.list_ports
 import time
 from typing import Any, Dict, Set, Optional, List
 
 import websockets
 from gcs_core import MavSerialCore, RELAY_TYPES
-from survey_planner import SurveyPlanner, Camera
+from survey_planner import SurveyPlanner, CameraSpec
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("GCS")
@@ -186,12 +187,12 @@ async def handle_client(ws, _path, core: MavSerialCore, hub: WebSocketHub):
                     camera_config = cmd.get("camera", {})
                     altitude = float(cmd.get("altitude", 50.0))
                     overlap_front = float(cmd.get("overlap_front", 75.0))
-                    overlap_side = float(cmd.get("overlap_side", 65.0))
+                    overlap_side = float(cmd.get("overlap_side", 75.0))  #standard is 65% but 75% minimum from ER
                     grid_angle = float(cmd.get("grid_angle", 0.0))
                     hover_and_capture = bool(cmd.get("hover_and_capture", False))
 
                     # Create camera from config or use default
-                    camera = Camera(
+                    camera = CameraSpec(
                         name=camera_config.get("name", "Custom"),
                         sensor_width=float(camera_config.get("sensor_width", 6.17)),
                         sensor_height=float(camera_config.get("sensor_height", 4.55)),
@@ -228,11 +229,177 @@ async def handle_client(ws, _path, core: MavSerialCore, hub: WebSocketHub):
         hub.clients.discard(ws)
         log.info("Client disconnected")
 
+def auto_detect_serial_device(preferred_baud: int = 57600) -> Optional[tuple[str, int]]:
+    """
+    Auto-detect MAVLink serial device by scanning available ports.
+    Optimized for Pixhawk 6X with SiK Telemetry Radio (915MHz).
+
+    Pixhawk 6X Port Configuration:
+    - TELEM1: MAVLink2 @ 57600  ← SiK Radio (GCS Connection) ✓ TARGET
+    - TELEM2: MAVLink1 @ 115200 ← Camera Sensor            ✗ AVOID
+
+    Prioritizes:
+    - MAVLink2 protocol at 57600 baud (TELEM1/SiK Radio)
+    - SiK Radio / FTDI telemetry devices
+    - Excludes 115200 baud (TELEM2/Camera sensor)
+
+    Returns:
+        Tuple of (device_path, baud_rate) if found, None otherwise
+    """
+    # MAVLink baud rates - prioritize 57600 (TELEM1/SiK Radio), exclude 115200 (TELEM2/Camera)
+    # SiK Radio on TELEM1 uses 57600 baud for 915MHz operation
+    baud_rates = [57600, preferred_baud, 921600, 500000, 230400]
+    # Remove duplicates and exclude 115200 (TELEM2 is camera sensor port)
+    baud_rates = [b for b in dict.fromkeys(baud_rates) if b != 115200]
+
+    # Known MAVLink device identifiers - prioritized for Pixhawk 6X + SiK Radio
+    mavlink_identifiers = [
+        # SiK Telemetry Radio (915MHz) - HIGHEST PRIORITY
+        ('VID:PID=0403:6001', 'SiK Telemetry Radio (FTDI)'),  # Most common SiK radio
+        ('VID:PID=0403:6015', 'SiK Radio v2 (FTDI)'),
+        ('VID:PID=26AC:0011', '3DR Radio/SiK'),
+
+        # Pixhawk 6X family
+        ('VID:PID=26AC', 'Pixhawk 6X'),  # Holybro Pixhawk 6X
+        ('VID:PID=0483:5740', 'Pixhawk 6X (STM32H7)'),
+        ('VID:PID=2DAE:1058', 'Pixhawk 6X'),
+
+        # Other FTDI-based telemetry (RFD900, etc.)
+        ('VID:PID=0403', 'FTDI Telemetry'),
+
+        # Generic STM32 (if direct USB connection)
+        ('VID:PID=0483', 'STM32'),
+    ]
+
+    log.info("Scanning for MAVLink devices...")
+    ports = serial.tools.list_ports.comports()
+
+    # Priority 1: Check for known MAVLink devices
+    for port in ports:
+        hwid = port.hwid if hasattr(port, 'hwid') else ''
+        for vid_pid, name in mavlink_identifiers:
+            if vid_pid in hwid:
+                log.info(f"Found {name} device: {port.device} ({hwid})")
+                # Try to verify it's actually MAVLink
+                for baud in baud_rates[:3]:  # Only try top 3 baud rates for known devices
+                    if verify_mavlink_device(port.device, baud):
+                        log.info(f"✓ Verified MAVLink at {port.device} @ {baud} baud")
+                        return (port.device, baud)
+
+    # Priority 2: Check all USB serial devices
+    log.info("Checking all available serial ports...")
+    for port in ports:
+        # Skip unwanted ports
+        skip_keywords = ['bluetooth', 'virtual', 'debug', 'jtag']
+        if any(keyword in port.device.lower() or keyword in port.description.lower() for keyword in skip_keywords):
+            log.debug(f"Skipping {port.device}: {port.description}")
+            continue
+
+        log.info(f"Testing {port.device}: {port.description}")
+
+        # For SiK Radio specifically, only try 57600 baud (standard)
+        if 'ftdi' in port.description.lower() or '0403' in (port.hwid if hasattr(port, 'hwid') else ''):
+            log.info(f"  Detected FTDI device (likely SiK Radio) - testing 57600 baud only")
+            if verify_mavlink_device(port.device, 57600):
+                log.info(f"✓ Found SiK Radio at {port.device} @ 57600 baud")
+                return (port.device, 57600)
+        else:
+            # For other devices, try multiple baud rates (but skip 115200)
+            for baud in baud_rates[:3]:  # Try top 3 baud rates
+                if verify_mavlink_device(port.device, baud):
+                    log.info(f"✓ Found MAVLink device at {port.device} @ {baud} baud")
+                    return (port.device, baud)
+
+    log.warning("No MAVLink devices found")
+    return None
+
+def verify_mavlink_device(port: str, baud: int, timeout: float = 3.0) -> bool:
+    """
+    Verify if a serial port has a MAVLink device by attempting to receive a heartbeat.
+
+    Args:
+        port: Serial port path
+        baud: Baud rate to test
+        timeout: Maximum time to wait for heartbeat (seconds)
+
+    Returns:
+        True if MAVLink heartbeat detected, False otherwise
+    """
+    try:
+        ser = serial.Serial(port, baud, timeout=0.5)
+        start_time = time.time()
+        buffer = bytearray()
+
+        log.debug(f"  Checking {port} @ {baud} baud...")
+
+        while time.time() - start_time < timeout:
+            if ser.in_waiting:
+                buffer.extend(ser.read(ser.in_waiting))
+
+                # Look for MAVLink v2 (0xFD) first - prioritized for Pixhawk 6X
+                # Then fall back to MAVLink v1 (0xFE)
+                for i in range(len(buffer) - 8):
+                    if buffer[i] == 0xFD:  # MAVLink v2 (PRIORITY - QGC standard)
+                        payload_len = buffer[i + 1]
+                        if payload_len < 256 and i + 12 + payload_len <= len(buffer):
+                            msg_id_low = buffer[i + 9]
+                            msg_id_mid = buffer[i + 10]
+                            msg_id_high = buffer[i + 11]
+                            msg_id = msg_id_low | (msg_id_mid << 8) | (msg_id_high << 16)
+                            if msg_id == 0:  # HEARTBEAT message
+                                ser.close()
+                                log.info(f"  ✓ MAVLink v2 heartbeat detected (Pixhawk 6X compatible)")
+                                return True
+                    elif buffer[i] == 0xFE:  # MAVLink v1 (may be camera - skip if at 115200)
+                        # Skip MAVLink v1 detection to avoid camera port
+                        # MAVLink v1: STX(1) LEN(1) SEQ(1) SYS(1) COMP(1) MSG(1) PAYLOAD(n) CRC(2)
+                        if baud == 115200:
+                            log.debug(f"  ⚠ MAVLink v1 at 115200 baud - likely camera, skipping")
+                            continue
+                        payload_len = buffer[i + 1]
+                        if payload_len < 256 and i + 8 + payload_len <= len(buffer):
+                            msg_id = buffer[i + 5]
+                            if msg_id == 0:  # HEARTBEAT message
+                                ser.close()
+                                log.debug(f"  ✓ MAVLink v1 heartbeat detected")
+                                return True
+
+                # Keep buffer size manageable
+                if len(buffer) > 1024:
+                    buffer = buffer[-512:]
+            else:
+                time.sleep(0.1)
+
+        ser.close()
+        return False
+
+    except (serial.SerialException, OSError) as e:
+        log.debug(f"  ✗ Error testing {port}: {e}")
+        return False
+
 async def main():
-    serial_dev = os.environ.get("GCS_SERIAL", "COM4")   #"/dev/ttyUSB0"
+    # Try to get device from environment variable first
+    serial_dev = os.environ.get("GCS_SERIAL", None)
     baud = int(os.environ.get("GCS_BAUD", "57600"))
     ws_host = os.environ.get("GCS_WS_HOST", "0.0.0.0")
     ws_port = int(os.environ.get("GCS_WS_PORT", "8765"))
+
+    # Auto-detect if not specified
+    if not serial_dev:
+        log.info("No GCS_SERIAL specified, auto-detecting...")
+        result = auto_detect_serial_device(preferred_baud=baud)
+        if result:
+            serial_dev, baud = result
+            log.info(f"Auto-detected device: {serial_dev} @ {baud} baud")
+        else:
+            log.error("Failed to auto-detect MAVLink device")
+            log.info("Available ports:")
+            for port in serial.tools.list_ports.comports():
+                log.info(f"  - {port.device}: {port.description} ({port.hwid if hasattr(port, 'hwid') else 'N/A'})")
+            log.error("Please specify device manually with GCS_SERIAL environment variable")
+            return
+    else:
+        log.info(f"Using specified device: {serial_dev} @ {baud} baud")
 
     connection_manager = ConnectionManager(serial_dev, baud)
     core = await connection_manager.connect()

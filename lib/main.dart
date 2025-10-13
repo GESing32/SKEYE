@@ -172,7 +172,11 @@ class _GcsHomeState extends State<GcsHome> {
           child: const Icon(Icons.airplanemode_active, color: Colors.indigo, size: 34),
         ),
     ];
-    final missionLine = Polyline(points: mission, strokeWidth: 3, color: Colors.orangeAccent);
+
+    // Only create polyline if mission has waypoints to avoid empty bounds assertion
+    final polylines = mission.isNotEmpty
+        ? [Polyline(points: mission, strokeWidth: 3, color: Colors.orangeAccent)]
+        : <Polyline>[];
 
     return Scaffold(
       appBar: AppBar(
@@ -204,7 +208,7 @@ class _GcsHomeState extends State<GcsHome> {
                   urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
                   userAgentPackageName: 'custom_gcs_serial',
                 ),
-                PolylineLayer(polylines: [missionLine]),
+                PolylineLayer(polylines: polylines),
                 MarkerLayer(markers: markers),
               ],
             ),
@@ -219,82 +223,180 @@ class _GcsHomeState extends State<GcsHome> {
     return Container(
       color: Colors.grey.shade100,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Wrap(
-        spacing: 24,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          _kv("Mode", tel.mode),
-          _kv("Armed", tel.armed ? "Yes" : "No"),
-          _kv("Lat", tel.pos?.latitude.toStringAsFixed(6) ?? "-"),
-          _kv("Lon", tel.pos?.longitude.toStringAsFixed(6) ?? "-"),
-          _kv("Alt rel (m)", tel.relAlt?.toStringAsFixed(1) ?? "-"),
-          _kv("GS (m/s)", tel.groundSpeed?.toStringAsFixed(1) ?? "-"),
-          _kv("VBat (V)", tel.voltage?.toStringAsFixed(2) ?? "-"),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
+              child: IntrinsicHeight(
+                child: Wrap(
+                  spacing: 24,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    _kv("Mode", tel.mode),
+                    _kv("Armed", tel.armed ? "Yes" : "No"),
+                    _kv("Lat", tel.pos?.latitude.toStringAsFixed(6) ?? "-"),
+                    _kv("Lon", tel.pos?.longitude.toStringAsFixed(6) ?? "-"),
+                    _kv("Alt rel (m)", tel.relAlt?.toStringAsFixed(1) ?? "-"),
+                    _kv("GS (m/s)", tel.groundSpeed?.toStringAsFixed(1) ?? "-"),
+                    _kv("VBat (V)", tel.voltage?.toStringAsFixed(2) ?? "-"),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
 
   Widget _controls() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      color: Colors.grey.shade50,
-      child: Row(
-        children: [
-          ElevatedButton.icon(
-            onPressed: _armToggle,
-            icon: Icon(tel.armed ? Icons.lock_open : Icons.lock),
-            label: Text(tel.armed ? "Disarm" : "Arm"),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 900;
+
+        return Container(
+          padding: const EdgeInsets.all(12),
+          color: Colors.grey.shade50,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                // Compact style for narrow screens
+                if (isNarrow) ...[
+                  ElevatedButton(
+                    onPressed: _armToggle,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(tel.armed ? Icons.lock_open : Icons.lock, size: 18),
+                        const SizedBox(width: 4),
+                        Text(tel.armed ? "Disarm" : "Arm"),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  _modeMenu(),
+                  const SizedBox(width: 6),
+                  ElevatedButton(
+                    onPressed: _rtl,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.undo, size: 18),
+                        SizedBox(width: 4),
+                        Text("RTL"),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  FilterChip(
+                    selected: missionMode,
+                    onSelected: (v) => _missionToggle(),
+                    label: const Text("Mission edit"),
+                    selectedColor: Colors.orange.shade100,
+                  ),
+                  const SizedBox(width: 6),
+                  ElevatedButton(
+                    onPressed: mission.isNotEmpty ? _missionUpload : null,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    ),
+                    child: const Text("Upload"),
+                  ),
+                  const SizedBox(width: 6),
+                  ElevatedButton(
+                    onPressed: mission.isNotEmpty ? _missionStart : null,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    ),
+                    child: const Text("Start"),
+                  ),
+                  const SizedBox(width: 6),
+                  if (missionMode)
+                    Text("${mission.length} WP", style: const TextStyle(fontWeight: FontWeight.bold)),
+                  if (missionMode) const SizedBox(width: 6),
+                  TextButton(
+                    onPressed: mission.isNotEmpty ? _missionClear : null,
+                    child: const Text("Clear"),
+                  ),
+                ] else ...[
+                  // Full style for wider screens
+                  ElevatedButton.icon(
+                    onPressed: _armToggle,
+                    icon: Icon(tel.armed ? Icons.lock_open : Icons.lock),
+                    label: Text(tel.armed ? "Disarm" : "Arm"),
+                  ),
+                  const SizedBox(width: 8),
+                  _modeMenu(),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: _rtl,
+                    icon: const Icon(Icons.undo),
+                    label: const Text("RTL"),
+                  ),
+                  const SizedBox(width: 8),
+                  FilterChip(
+                    selected: missionMode,
+                    onSelected: (v) => _missionToggle(),
+                    label: const Text("Mission edit"),
+                    selectedColor: Colors.orange.shade100,
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: mission.isNotEmpty ? _missionUpload : null,
+                    child: const Text("Upload"),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: mission.isNotEmpty ? _missionStart : null,
+                    child: const Text("Start"),
+                  ),
+                  const SizedBox(width: 8),
+                  if (missionMode)
+                    Text("${mission.length} WP", style: const TextStyle(fontWeight: FontWeight.bold)),
+                  if (missionMode) const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: mission.isNotEmpty ? _missionClear : null,
+                    child: const Text("Clear"),
+                  ),
+                ],
+              ],
+            ),
           ),
-          const SizedBox(width: 8),
-          _modeMenu(),
-          const SizedBox(width: 8),
-          ElevatedButton.icon(
-            onPressed: _rtl,
-            icon: const Icon(Icons.undo),
-            label: const Text("RTL"),
-          ),
-          const SizedBox(width: 8),
-          FilterChip(
-            selected: missionMode,
-            onSelected: (v) => _missionToggle(),
-            label: const Text("Mission edit"),
-            selectedColor: Colors.orange.shade100,
-          ),
-          const SizedBox(width: 8),
-          ElevatedButton(
-            onPressed: mission.isNotEmpty ? _missionUpload : null,
-            child: const Text("Upload"),
-          ),
-          const SizedBox(width: 8),
-          ElevatedButton(
-            onPressed: mission.isNotEmpty ? _missionStart : null,
-            child: const Text("Start"),
-          ),
-          const SizedBox(width: 8),
-          TextButton(
-            onPressed: mission.isNotEmpty ? _missionClear : null,
-            child: const Text("Clear"),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
   Widget _modeMenu() {
-    return PopupMenuButton<String>(
-      onSelected: (m) => _setMode(m),
-      itemBuilder: (_) => const [
-        PopupMenuItem(value: "GUIDED", child: Text("GUIDED")),
-        PopupMenuItem(value: "LOITER", child: Text("LOITER")),
-        PopupMenuItem(value: "ALT_HOLD", child: Text("ALT_HOLD")),
-        PopupMenuItem(value: "STABILIZE", child: Text("STABILIZE")),
-      ],
-      child: ElevatedButton(
-        onPressed: () {}, // Provide a valid onPressed callback
-        child: const Text("Mode"),
-      ),
+    return ElevatedButton(
+      onPressed: () {
+        // Show mode selection menu
+        showMenu<String>(
+          context: context,
+          position: const RelativeRect.fromLTRB(100, 100, 0, 0),
+          items: const [
+            PopupMenuItem(value: "GUIDED", child: Text("GUIDED")),
+            PopupMenuItem(value: "LOITER", child: Text("LOITER")),
+            PopupMenuItem(value: "ALT_HOLD", child: Text("ALT_HOLD")),
+            PopupMenuItem(value: "STABILIZE", child: Text("STABILIZE")),
+          ],
+        ).then((value) {
+          if (value != null) {
+            _setMode(value);
+          }
+        });
+      },
+      child: const Text("Mode"),
     );
   }
 

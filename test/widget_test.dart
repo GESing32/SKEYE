@@ -1,110 +1,232 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+// Basic Flutter widget tests for GCS application
+// Tests the main app structure and initial rendering
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-//import 'package:custom_gcs_serial/main.dart';
-
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'SKEYE GCS',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        brightness: Brightness.dark, // Dark theme for better visibility
-        useMaterial3: true,
-      ),
-      home: const GCSHomePage(),
-    );
-  }
-}
-
-class GCSHomePage extends StatelessWidget {
-  const GCSHomePage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('SKEYE Ground Control Station'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () {
-              // Add settings navigation here
-            },
-          ),
-        ],
-      ),
-      body: const Column(
-        children: [
-          Expanded(
-            child: Row(
-              children: [
-                // Main telemetry and control panel
-                Expanded(
-                  flex: 2,
-                  child: Card(
-                    margin: EdgeInsets.all(8.0),
-                    child: Center(child: Text('Telemetry Panel')),
-                  ),
-                ),
-                // Map view
-                Expanded(
-                  flex: 3,
-                  child: Card(
-                    margin: EdgeInsets.all(8.0),
-                    child: Center(child: Text('Map View')),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Status bar
-          Card(
-            margin: EdgeInsets.all(8.0),
-            child: Padding(
-              padding: EdgeInsets.all(8.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('Connection Status'),
-                  Text('Battery: --'),
-                  Text('GPS: --'),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+import 'package:custom_gcs_serial/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  group('GcsApp Widget Tests', () {
+    testWidgets('App loads with correct title', (WidgetTester tester) async {
+      // Build the GCS app
+      await tester.pumpWidget(const GcsApp());
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+      // Verify app title is present in AppBar
+      expect(find.text('Custom GCS (Serial)'), findsOneWidget);
+    });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    testWidgets('App shows disconnected link icon initially', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+      // Should show link_off icon when not connected
+      expect(find.byIcon(Icons.link_off), findsOneWidget);
+    });
+
+    testWidgets('Control buttons are present', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
+
+      // Verify main control buttons exist
+      expect(find.text('Arm'), findsOneWidget);
+      expect(find.text('RTL'), findsOneWidget);
+      expect(find.text('Mission edit'), findsOneWidget);
+    });
+
+    testWidgets('Status bar shows telemetry fields', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
+
+      // Verify telemetry fields are displayed
+      expect(find.textContaining('Mode:'), findsOneWidget);
+      expect(find.textContaining('Armed:'), findsOneWidget);
+      expect(find.textContaining('Lat:'), findsOneWidget);
+      expect(find.textContaining('Lon:'), findsOneWidget);
+      expect(find.textContaining('Alt rel'), findsOneWidget);
+      expect(find.textContaining('GS'), findsOneWidget);
+      expect(find.textContaining('VBat'), findsOneWidget);
+    });
+
+    testWidgets('Mission control buttons are initially disabled', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
+
+      // Find upload and start buttons
+      final uploadButton = find.widgetWithText(ElevatedButton, 'Upload');
+      final startButton = find.widgetWithText(ElevatedButton, 'Start');
+
+      expect(uploadButton, findsOneWidget);
+      expect(startButton, findsOneWidget);
+
+      // Verify buttons are disabled (onPressed is null)
+      final uploadWidget = tester.widget<ElevatedButton>(uploadButton);
+      final startWidget = tester.widget<ElevatedButton>(startButton);
+
+      expect(uploadWidget.onPressed, isNull);
+      expect(startWidget.onPressed, isNull);
+    });
+
+    testWidgets('Mission edit toggle works', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
+
+      // Find and tap mission edit chip
+      final missionChip = find.widgetWithText(FilterChip, 'Mission edit');
+      expect(missionChip, findsOneWidget);
+
+      // Initially not selected
+      FilterChip chip = tester.widget<FilterChip>(missionChip);
+      expect(chip.selected, isFalse);
+
+      // Tap to enable mission mode
+      await tester.tap(missionChip);
+      await tester.pump();
+
+      // Should now be selected
+      chip = tester.widget<FilterChip>(missionChip);
+      expect(chip.selected, isTrue);
+    });
+
+    testWidgets('Mode menu button exists and opens popup', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
+
+      // Find mode button
+      final modeButton = find.widgetWithText(ElevatedButton, 'Mode');
+      expect(modeButton, findsOneWidget);
+
+      // Tap to open popup menu
+      await tester.tap(modeButton);
+      await tester.pumpAndSettle();
+
+      // Verify mode options are shown
+      expect(find.text('GUIDED'), findsOneWidget);
+      expect(find.text('LOITER'), findsOneWidget);
+      expect(find.text('ALT_HOLD'), findsOneWidget);
+      expect(find.text('STABILIZE'), findsOneWidget);
+    });
+
+    testWidgets('Connection indicator is visible', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
+
+      // Verify connection status icon is visible (starts disconnected)
+      expect(find.byIcon(Icons.link_off), findsOneWidget);
+
+      // Find the icon widget
+      final iconWidget = tester.widget<Icon>(find.byIcon(Icons.link_off));
+      expect(iconWidget.color, equals(Colors.red));
+    });
+
+    testWidgets('Clear waypoints button exists in mission mode', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
+
+      // Enable mission edit mode
+      final missionChip = find.widgetWithText(FilterChip, 'Mission edit');
+      await tester.tap(missionChip);
+      await tester.pump();
+
+      // Verify Clear button is present
+      expect(find.text('Clear'), findsOneWidget);
+    });
+
+    testWidgets('Waypoint counter displays initially zero', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
+
+      // Enable mission edit mode
+      final missionChip = find.widgetWithText(FilterChip, 'Mission edit');
+      await tester.tap(missionChip);
+      await tester.pump();
+
+      // Verify waypoint counter shows 0
+      expect(find.textContaining('0 WP'), findsOneWidget);
+    });
+
+    testWidgets('All flight control buttons are enabled', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
+
+      // Find control buttons
+      final armButton = find.widgetWithText(ElevatedButton, 'Arm');
+      final rtlButton = find.widgetWithText(ElevatedButton, 'RTL');
+      final modeButton = find.widgetWithText(ElevatedButton, 'Mode');
+
+      // Verify all buttons exist
+      expect(armButton, findsOneWidget);
+      expect(rtlButton, findsOneWidget);
+      expect(modeButton, findsOneWidget);
+
+      // Verify buttons are enabled
+      final armWidget = tester.widget<ElevatedButton>(armButton);
+      final rtlWidget = tester.widget<ElevatedButton>(rtlButton);
+      final modeWidget = tester.widget<ElevatedButton>(modeButton);
+
+      expect(armWidget.onPressed, isNotNull);
+      expect(rtlWidget.onPressed, isNotNull);
+      expect(modeWidget.onPressed, isNotNull);
+    });
+
+    testWidgets('Status bar has all telemetry indicators', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
+
+      // Verify all telemetry indicators are present
+      final indicators = [
+        'Mode:',
+        'Armed:',
+        'Lat:',
+        'Lon:',
+        'Alt rel',
+        'GS',
+        'VBat',
+      ];
+
+      for (final indicator in indicators) {
+        expect(find.textContaining(indicator), findsOneWidget);
+      }
+    });
+
+    testWidgets('Altitude indicator displays meters unit', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
+
+      // Verify altitude has meters unit
+      expect(find.textContaining('Alt rel'), findsOneWidget);
+      expect(find.textContaining('m'), findsWidgets);
+    });
+
+    testWidgets('Speed indicator displays m/s unit', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
+
+      // Verify speed has m/s unit
+      expect(find.textContaining('GS'), findsOneWidget);
+      expect(find.textContaining('m/s'), findsWidgets);
+    });
+
+    testWidgets('Battery indicator displays voltage unit', (WidgetTester tester) async {
+      // Build the app
+      await tester.pumpWidget(const GcsApp());
+      await tester.pump();
+
+      // Verify battery has voltage unit
+      expect(find.textContaining('VBat'), findsOneWidget);
+      expect(find.textContaining('V'), findsWidgets);
+    });
   });
 }

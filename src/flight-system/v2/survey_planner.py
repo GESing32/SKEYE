@@ -46,13 +46,14 @@ class CameraSpec:
         Sentera Double 4K Camera - Wide Angle (8mm lens).
         Connected via MAVLink TELEM2 on Pixhawk 6x.
         Reference: 27060 Double 4K Integration Guide
+        Sensor: 4000x3000 pixels (from config.yml)
         """
         return CameraSpec(
             name="Sentera Double 4K (8mm Wide)",
             sensor_width_mm=6.3,      # 1/2.3" sensor
             sensor_height_mm=4.7,
-            image_width_px=3840,      # 4K resolution
-            image_height_px=2160,
+            image_width_px=4000,      # Actual resolution from config.yml
+            image_height_px=3000,
             focal_length_mm=8.0,      # Wide angle lens
             min_trigger_interval_s=0.5  # MAVLink triggered
         )
@@ -63,13 +64,14 @@ class CameraSpec:
         Sentera Double 4K Camera - Narrow Angle (25mm lens).
         Connected via MAVLink TELEM2 on Pixhawk 6x.
         Reference: 27060 Double 4K Integration Guide
+        Sensor: 4000x3000 pixels (from config.yml)
         """
         return CameraSpec(
             name="Sentera Double 4K (25mm Narrow)",
             sensor_width_mm=6.3,      # 1/2.3" sensor
             sensor_height_mm=4.7,
-            image_width_px=3840,      # 4K resolution
-            image_height_px=2160,
+            image_width_px=4000,      # Actual resolution from config.yml
+            image_height_px=3000,
             focal_length_mm=25.0,     # Narrow angle lens
             min_trigger_interval_s=0.5  # MAVLink triggered
         )
@@ -81,7 +83,7 @@ class SurveyConfig:
     altitude_m: float = 50.0
     speed_m_s: float = 5.0
     front_overlap_pct: float = 75.0
-    side_overlap_pct: float = 65.0
+    side_overlap_pct: float = 75.0
     grid_angle_deg: float = 0.0  # 0 = North-South, 90 = East-West
     entry_point: EntryPoint = EntryPoint.TOP_LEFT
     turnaround_dist_m: float = 10.0
@@ -147,7 +149,7 @@ class SurveyPlanner:
         # Distance between photo centers
         trigger_dist = image_footprint_length * (1.0 - overlap_fraction)
 
-        return max(trigger_dist, 0.1)  # Minimum 10cm
+        return max(trigger_dist, 1)  # Minimum 10cm
 
     def calculate_transect_spacing(
         self,
@@ -521,19 +523,19 @@ def test_survey_planner():
     # Create survey area (100m x 100m square near UK campus)
     uk_center = LatLon(38.0336, -84.5037)
     survey_area = [
-        GeodeticUtils.destination_point(uk_center, 50, 315),  # NW
-        GeodeticUtils.destination_point(uk_center, 50, 45),   # NE
-        GeodeticUtils.destination_point(uk_center, 50, 135),  # SE
-        GeodeticUtils.destination_point(uk_center, 50, 225),  # SW
+        GeodeticUtils.destination_point(uk_center, 80, 315),  # NW
+        GeodeticUtils.destination_point(uk_center, 80, 45),   # NE
+        GeodeticUtils.destination_point(uk_center, 80, 135),  # SE
+        GeodeticUtils.destination_point(uk_center, 80, 225),  # SW
     ]
 
     # Configure survey
-    camera = CameraSpec.smartphone_default()
+    camera = CameraSpec.sentera_double_4k_wide()
     config = SurveyConfig(
-        altitude_m=50,
-        speed_m_s=5,
+        altitude_m=80,
+        speed_m_s=8,
         front_overlap_pct=75,
-        side_overlap_pct=65,
+        side_overlap_pct=75,
         grid_angle_deg=0,
         entry_point=EntryPoint.TOP_LEFT,
         turnaround_dist_m=10,

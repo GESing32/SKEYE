@@ -26,7 +26,7 @@ def now_s() -> float:
 class MavSerialCore:
     def __init__(
         self,
-        serial_dev: str = "COM4", #"/dev/ttyUSB0"
+        serial_dev: str = "COM4", #"/dev/ttyUSB0" needs changed depending on OS
         baud: int = 57600,
         heartbeat_timeout: float = 5.0,
         log_level: int = logging.INFO,
