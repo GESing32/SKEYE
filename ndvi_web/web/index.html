@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>SKEYE | NDVI Web</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        :root {
+            --bg: #0b0f14;
+            --panel: #101621;
+            --card: #0f1520;
+            --line: #202837;
+            --muted: #9aa5b1;
+            --text: #e6edf3;
+            --accent: #34d399;
+            --accent2: #60a5fa;
+            --warn: #eab308;
+            --danger: #ef4444;
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        body {
+            margin: 0;
+            background:
+                radial-gradient(1200px 600px at 20% -10%, #1a2333 0%, transparent 60%),
+                radial-gradient(1000px 500px at 120% 0%, #0d2430 0%, transparent 60%),
+                var(--bg);
+            color: var(--text);
+            font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        }
+
+        .wrap {
+            max-width: 1100px;
+            margin: 32px auto;
+            padding: 0 18px
+        }
+
+        .shell {
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%), var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+            overflow: hidden;
+        }
+
+        .header {
+            padding: 22px 22px 14px;
+            border-bottom: 1px solid var(--line);
+            display: flex;
+            gap: 14px;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+        }
+
+        .brand {
+            display: flex;
+            gap: 12px;
+            align-items: center
+        }
+
+        .logo {
+            width: 38px;
+            height: 38px;
+            border-radius: 12px;
+            background: conic-gradient(from 120deg, var(--accent), #6ee7b7, #22d3ee 65%, var(--accent2));
+            box-shadow: 0 6px 18px rgba(52, 211, 153, .35);
+            border: 1px solid #1f2a37;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 20px;
+            letter-spacing: .2px
+        }
+
+        .muted {
+            color: var(--muted)
+        }
+
+        .top-tabs {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap
+        }
+
+        .top-tab {
+            padding: 8px 12px;
+            border-radius: 12px;
+            border: 1px solid var(--line);
+            cursor: pointer;
+            background: linear-gradient(180deg, #0e1420, #0b111a);
+        }
+
+        .top-tab.active {
+            outline: 2px solid #1f2937;
+            background: #0b1117
+        }
+
+        .body {
+            padding: 18px
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 18px;
+        }
+
+        .row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap
+        }
+
+        input[type=text] {
+            width: 100%;
+            padding: 10px;
+            border-radius: 10px;
+            border: 1px solid #242a36;
+            background: #0d1117;
+            color: var(--text)
+        }
+
+        button {
+            border: 0;
+            background: linear-gradient(90deg, #34d399, #6ee7b7);
+            color: #0b1110;
+            font-weight: 800;
+            padding: 10px 14px;
+            border-radius: 10px;
+            cursor: pointer
+        }
+
+        button:disabled {
+            opacity: .6;
+            cursor: not-allowed
+        }
+
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-top: 14px
+        }
+
+        .tab {
+            padding: 8px 10px;
+            border-radius: 999px;
+            border: 1px solid #2a3140;
+            cursor: pointer
+        }
+
+        .tab.active {
+            background: #0d1117
+        }
+
+        .panel {
+            margin-top: 14px;
+            border: 1px dashed #2a3140;
+            padding: 12px;
+            border-radius: 12px
+        }
+
+        .file {
+            padding: 10px;
+            border: 1px solid #2a3140;
+            border-radius: 10px;
+            background: #0d1117;
+            min-width: 260px
+        }
+
+        .img {
+            max-width: 100%;
+            border-radius: 12px;
+            border: 1px solid #2a3140
+        }
+
+        .stat {
+            display: grid;
+            grid-template-columns: 90px 1fr;
+            gap: 6px
+        }
+
+        .ok {
+            color: #22c55e
+        }
+
+        .bad {
+            color: var(--danger)
+        }
+
+        .warn {
+            color: var(--warn)
+        }
+
+        /* --- Welcome & placeholder layouts --- */
+        .hero {
+            display: grid;
+            grid-template-columns: 1.3fr 1fr;
+            gap: 18px;
+            align-items: center;
+        }
+
+        .hero .big {
+            font-size: 28px;
+            line-height: 1.15;
+            margin: 0 0 10px;
+            background: linear-gradient(90deg, #e6edf3, #a5b4fc 65%, #60a5fa);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 6px 10px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: #0d1117
+        }
+
+        .grid {
+            display: grid;
+            gap: 12px
+        }
+
+        .grid.cols-3 {
+            grid-template-columns: repeat(3, minmax(0, 1fr))
+        }
+
+        .ghost {
+            border: 1px dashed #2a3140;
+            border-radius: 14px;
+            padding: 14px;
+            min-height: 120px;
+            background: #0b1117;
+        }
+
+        .ghost h4 {
+            margin: 0 0 6px;
+            font-size: 14px;
+            letter-spacing: .3px;
+            color: #cbd5e1
+        }
+
+        .ghost .hint {
+            color: var(--muted);
+            font-size: 13px
+        }
+
+        .kpis {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 8px
+        }
+
+        .kpi {
+            background: #0b1117;
+            border: 1px solid #1f2633;
+            border-radius: 12px;
+            padding: 12px
+        }
+
+        .kpi .v {
+            font-size: 18px;
+            font-weight: 800
+        }
+
+        @media (max-width:900px) {
+            .hero {
+                grid-template-columns: 1fr
+            }
+
+            .grid.cols-3 {
+                grid-template-columns: 1fr
+            }
+
+            .kpis {
+                grid-template-columns: 1fr 1fr
+            }
+        }
+
+        /* spacing helpers */
+        .mt8 {
+            margin-top: 8px
+        }
+
+        .mt12 {
+            margin-top: 12px
+        }
+
+        .mt16 {
+            margin-top: 16px
+        }
+
+        .mt20 {
+            margin-top: 20px
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <div class="shell">
+            <!-- Header / Nav -->
+            <div class="header">
+                <div class="brand">
+                    <div class="logo" aria-hidden="true"></div>
+                    <div>
+                        <h1>SKEYE • NDVI & Mission UI</h1>
+                        <div class="muted">Autonomous crop monitoring • NDVI/NDRE analytics • Geo-stitch preview</div>
+                    </div>
+                </div>
+                <div class="top-tabs">
+                    <div class="top-tab active" data-page="welcome">Welcome</div>
+                    <div class="top-tab" data-page="ndvi">NDVI Detection</div>
+                    <div class="top-tab" data-page="plan">Autonomous Planning</div>
+                    <div class="top-tab" data-page="stitch">Overhead View (Geo-stitching)</div>
+                </div>
+            </div>
+
+            <div class="body">
+                <!-- ============= WELCOME ============= -->
+                <section id="page-welcome" class="card">
+                    <div class="hero">
+                        <div>
+                            <div class="badge">University of Kentucky • Senior Design • SKEYE</div>
+                            <h2 class="big">Detect nitrogen stress from the sky.<br />Plan missions. See the whole
+                                field.</h2>
+                            <p class="muted">
+                                This interface pairs a FastAPI backend with a lightweight web client for real-time NDVI
+                                computation
+                                and demo layouts of autonomy and geo-stitching views. Use the tabs above to switch
+                                modes.
+                            </p>
+                            <div class="kpis">
+                                <div class="kpi">
+                                    <div class="v">Multispectral</div>
+                                    <div class="muted">NIR + Red (+ Red-Edge)</div>
+                                </div>
+                                <div class="kpi">
+                                    <div class="v">NDVI Stats</div>
+                                    <div class="muted">Mean / Min / Max</div>
+                                </div>
+                                <div class="kpi">
+                                    <div class="v">Batch ZIP</div>
+                                    <div class="muted">Folder processing</div>
+                                </div>
+                                <div class="kpi">
+                                    <div class="v">Extensible</div>
+                                    <div class="muted">Hooks for autonomy & stitch</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="ghost">
+                            <h4>How to use</h4>
+                            <div class="hint">
+                                1) Start backend: <code>uvicorn ndvi_web.server.server:app --reload</code><br />
+                                2) Go to <b>NDVI Detection</b> tab → upload NIR + Red images (or a folder) →
+                                compute.<br />
+                                3) Switch to <b>Autonomous Planning</b> or <b>Overhead View</b> to preview layouts.
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ============= NDVI (original UI kept intact) ============= -->
+                <section id="page-ndvi" class="card" style="display:none">
+                    <h3 style="margin-top:0">NDVI Web</h3>
+                    <div class="muted">Upload NIR + Red to compute NDVI. For batch, use a folder with pairs named
+                        <code>*_nir.*</code> and <code>*_red.*</code> (same stem).
+                    </div>
+
+                    <div class="row mt12">
+                        <label>API:</label>
+                        <input id="api" type="text" value="http://localhost:8000">
+                        <span id="health" class="muted">checking…</span>
+                    </div>
+
+                    <div class="tabs mt12">
+                        <div id="tab1" class="tab active">Single Pair</div>
+                        <div id="tab2" class="tab">Folder (Batch)</div>
+                    </div>
+
+                    <!-- Single -->
+                    <div id="p1" class="panel">
+                        <div class="row">
+                            <div class="file">
+                                <div class="muted">NIR image</div>
+                                <input id="nir" type="file" accept="image/*">
+                            </div>
+                            <div class="file">
+                                <div class="muted">Red image</div>
+                                <input id="red" type="file" accept="image/*">
+                            </div>
+                            <div>
+                                <div class="muted">Mode</div>
+                                <label><input type="checkbox" id="color" checked> Colorized output</label>
+                            </div>
+                            <div>
+                                <button id="go1" disabled>Compute NDVI</button>
+                            </div>
+                        </div>
+                        <div id="out1" class="mt12"></div>
+                    </div>
+
+                    <!-- Batch -->
+                    <div id="p2" class="panel" style="display:none">
+                        <div class="row">
+                            <div class="file">
+                                <div class="muted">Pick a folder (contains *_nir.* and *_red.*)</div>
+                                <input id="folder" type="file" webkitdirectory directory multiple>
+                            </div>
+                            <div>
+                                <div class="muted">Mode</div>
+                                <label><input type="checkbox" id="color2" checked> Colorized output</label>
+                            </div>
+                            <div>
+                                <button id="go2" disabled>Compute NDVI (ZIP)</button>
+                            </div>
+                        </div>
+                        <div id="out2" class="muted mt8"></div>
+                    </div>
+                </section>
+
+                <!-- ============= AUTONOMOUS PLANNING (layout only, grid style) ============= -->
+                <section id="page-plan" class="card" style="display:none">
+                    <h3 style="margin-top:0">Autonomous Mission Planning (Layout Grid)</h3>
+
+                    <!-- Top mission grid -->
+                    <div class="grid cols-3 mt12"
+                        style="background-image:linear-gradient(transparent 39px,#1e2634 40px),linear-gradient(90deg,transparent 39px,#1e2634 40px);background-size:40px 40px;border-radius:12px;padding:12px;">
+                        <div class="ghost" style="min-height:180px;">
+                            <h4>Mission Map</h4>
+                            <div class="hint">Field grid • waypoint overlay</div>
+                        </div>
+                        <div class="ghost" style="min-height:180px;">
+                            <h4>Route Path</h4>
+                            <div class="hint">Flight legs drawn across cells</div>
+                        </div>
+                        <div class="ghost" style="min-height:180px;">
+                            <h4>Camera Triggers</h4>
+                            <div class="hint">Capture points on grid intersections</div>
+                        </div>
+                    </div>
+
+                    <!-- Bottom configuration grid -->
+                    <div class="grid cols-3 mt16"
+                        style="background-image:linear-gradient(transparent 39px,#1e2634 40px),linear-gradient(90deg,transparent 39px,#1e2634 40px);background-size:40px 40px;border-radius:12px;padding:12px;">
+                        <div class="ghost" style="min-height:160px;">
+                            <h4>Flight Parameters</h4>
+                            <div class="hint">Altitude • speed • overlap</div>
+                        </div>
+                        <div class="ghost" style="min-height:160px;">
+                            <h4>Environment</h4>
+                            <div class="hint">Wind • obstacles • weather</div>
+                        </div>
+                        <div class="ghost" style="min-height:160px;">
+                            <h4>Mission Summary</h4>
+                            <div class="hint">Coverage • ETA • battery splits</div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ============= OVERHEAD VIEW / GEO-STITCHING (layout only, coordinates-based grid) ============= -->
+                <section id="page-stitch" class="card" style="display:none">
+                    <h3 style="margin-top:0">Overhead View (Geo-stitching Layout)</h3>
+
+                    <!-- Coordinate + map grid -->
+                    <div class="grid cols-3 mt12"
+                        style="background-image:linear-gradient(transparent 39px,#1e2634 40px),linear-gradient(90deg,transparent 39px,#1e2634 40px);background-size:40px 40px;border-radius:12px;padding:12px;">
+                        <div class="ghost" style="min-height:160px;">
+                            <h4>Coordinate Import</h4>
+                            <div class="hint">EXIF / CSV / RTK logs</div>
+                        </div>
+                        <div class="ghost" style="min-height:160px;">
+                            <h4>Coordinate Grid Map</h4>
+                            <div class="hint">Pins placed by lat/lon/alt</div>
+                        </div>
+                        <div class="ghost" style="min-height:160px;">
+                            <h4>Projection Settings</h4>
+                            <div class="hint">CRS • GSD • transform</div>
+                        </div>
+                    </div>
+
+                    <!-- Stitching preview grid -->
+                    <div class="grid cols-3 mt16"
+                        style="background-image:linear-gradient(transparent 39px,#1e2634 40px),linear-gradient(90deg,transparent 39px,#1e2634 40px);background-size:40px 40px;border-radius:12px;padding:12px;">
+                        <div class="ghost" style="min-height:200px;">
+                            <h4>Tile Placement</h4>
+                            <div class="hint">Images arranged by coordinates</div>
+                        </div>
+                        <div class="ghost" style="min-height:200px;">
+                            <h4>Alignment Preview</h4>
+                            <div class="hint">Grid overlay alignment</div>
+                        </div>
+                        <div class="ghost" style="min-height:200px;">
+                            <h4>Final Mosaic</h4>
+                            <div class="hint">Geo-referenced stitched image</div>
+                        </div>
+                    </div>
+
+                    <!-- Export / metadata grid -->
+                    <div class="grid cols-3 mt16"
+                        style="background-image:linear-gradient(transparent 39px,#1e2634 40px),linear-gradient(90deg,transparent 39px,#1e2634 40px);background-size:40px 40px;border-radius:12px;padding:12px;">
+                        <div class="ghost" style="min-height:140px;">
+                            <h4>Residual Heatmap</h4>
+                            <div class="hint">Coordinate accuracy display</div>
+                        </div>
+                        <div class="ghost" style="min-height:140px;">
+                            <h4>Metadata Summary</h4>
+                            <div class="hint">Transform + CRS info</div>
+                        </div>
+                        <div class="ghost" style="min-height:140px;">
+                            <h4>Export Panel</h4>
+                            <div class="hint">GeoTIFF • PNG • world-file</div>
+                        </div>
+                    </div>
+                </section>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /* ======= Top-level page tabs ======= */
+        const pages = {
+            welcome: document.getElementById('page-welcome'),
+            ndvi: document.getElementById('page-ndvi'),
+            plan: document.getElementById('page-plan'),
+            stitch: document.getElementById('page-stitch'),
+        };
+        const topTabs = Array.from(document.querySelectorAll('.top-tab'));
+        function showPage(name) {
+            Object.entries(pages).forEach(([k, el]) => el.style.display = (k === name ? 'block' : 'none'));
+            topTabs.forEach(t => t.classList.toggle('active', t.dataset.page === name));
+        }
+        topTabs.forEach(t => t.addEventListener('click', () => showPage(t.dataset.page)));
+        showPage('welcome');
+
+        /* ======= Existing NDVI logic (unchanged) ======= */
+        const $ = s => document.querySelector(s);
+        const api = $('#api'), health = $('#health');
+        const tab1 = $('#tab1'), tab2 = $('#tab2'), p1 = $('#p1'), p2 = $('#p2');
+
+        function setTab(n) {
+            [tab1, tab2].forEach((t, i) => t.classList.toggle('active', i + 1 === n));
+            p1.style.display = n === 1 ? 'block' : 'none'; p2.style.display = n === 2 ? 'block' : 'none';
+        }
+        tab1 && (tab1.onclick = () => setTab(1));
+        tab2 && (tab2.onclick = () => setTab(2));
+
+        async function ping() {
+            if (!api || !health) return;
+            health.textContent = 'checking…';
+            try {
+                const r = await fetch(api.value.replace(/\/$/, '') + '/api/health');
+                health.textContent = r.ok ? 'server ok' : 'server reachable';
+                health.className = r.ok ? 'ok' : 'warn';
+            } catch { health.textContent = 'no server'; health.className = 'bad'; }
+        }
+        api && api.addEventListener('change', ping);
+        window.addEventListener('load', ping);
+
+        // Single
+        const nir = $('#nir'), red = $('#red'), color = $('#color'), go1 = $('#go1'), out1 = $('#out1');
+        function updateGo1() { if (go1) go1.disabled = !(nir?.files?.length && red?.files?.length); }
+        nir && (nir.onchange = updateGo1); red && (red.onchange = updateGo1);
+
+        go1 && (go1.onclick = async () => {
+            out1.innerHTML = 'Processing…';
+            try {
+                const form = new FormData();
+                form.append('nir', nir.files[0]);
+                form.append('red', red.files[0]);
+                form.append('color', color.checked ? '1' : '0');
+                const r = await fetch(api.value.replace(/\/$/, '') + '/api/ndvi/single', { method: 'POST', body: form });
+                const data = await r.json();
+                if (!r.ok) throw new Error(data.error || r.statusText);
+                const s = data.stats;
+                out1.innerHTML = `
+          <div class="row" style="align-items:flex-start">
+            <div><img class="img" src="${data.ndvi_png_b64}" alt="NDVI"></div>
+            <div style="min-width:220px">
+              <div class="stat"><div>Mean</div><div>${s.mean.toFixed(4)}</div></div>
+              <div class="stat"><div>Min</div><div>${s.min.toFixed(4)}</div></div>
+              <div class="stat"><div>Max</div><div>${s.max.toFixed(4)}</div></div>
+              <div class="stat"><div>Size</div><div>${s.shape[1]} × ${s.shape[0]}</div></div>
+            </div>
+          </div>`;
+            } catch (e) { out1.innerHTML = `<span class="bad">Error:</span> ${String(e.message || e)}`; }
+        });
+
+        // Batch
+        const folder = $('#folder'), color2 = $('#color2'), go2 = $('#go2'), out2 = $('#out2');
+        folder && (folder.onchange = () => { if (go2) { go2.disabled = !(folder.files?.length); } if (out2) { out2.textContent = folder.files?.length ? `${folder.files.length} files selected` : ''; } });
+
+        go2 && (go2.onclick = async () => {
+            out2.textContent = 'Processing…';
+            try {
+                const form = new FormData();
+                for (const f of folder.files) form.append('files', f);
+                form.append('color', color2.checked ? '1' : '0');
+                const r = await fetch(api.value.replace(/\/$/, '') + '/api/ndvi/batch', { method: 'POST', body: form });
+                const ct = r.headers.get('content-type') || '';
+                if (!r.ok && ct.includes('application/json')) {
+                    const j = await r.json(); throw new Error(j.error || r.statusText);
+                }
+                const blob = await r.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'ndvi_results.zip'; a.click();
+                URL.revokeObjectURL(url);
+                out2.textContent = 'Downloaded ndvi_results.zip';
+            } catch (e) { out2.innerHTML = `<span class="bad">Error:</span> ${String(e.message || e)}`; }
+        });
+    </script>
+</body>
+
+</html>
