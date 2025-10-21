@@ -43,6 +43,7 @@ windows/
 
 # IDE
 .claude/
+claude/
 .idea/
 .vscode/
 *.iml
