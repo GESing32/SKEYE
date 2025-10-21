@@ -1,0 +1,65 @@
+# =============================================================================
+# Test Dependencies for SKEYE Flight System
+# =============================================================================
+#
+# Install with: pip install -r requirements-test.txt
+#
+
+# Core Testing Framework
+# -----------------------------------------------------------------------------
+pytest>=7.4.0                 # Modern Python testing framework
+pytest-cov>=4.1.0             # Code coverage plugin
+pytest-mock>=3.12.0           # Better mocking support
+pytest-timeout>=2.2.0         # Timeout handling for tests
+pytest-xdist>=3.5.0           # Parallel test execution
+
+# Additional Testing Tools
+# -----------------------------------------------------------------------------
+pytest-html>=4.1.0            # HTML test reports
+pytest-json-report>=1.5.0     # JSON test reports for CI/CD
+pytest-benchmark>=4.0.0       # Performance benchmarking
+
+# Code Quality
+# -----------------------------------------------------------------------------
+coverage>=7.4.0               # Coverage measurement
+pytest-clarity>=1.0.1         # Better assertion output
+
+# Compatibility
+# -----------------------------------------------------------------------------
+# Note: If already using unittest, no need to uninstall.
+# pytest can run unittest tests without modification.
+
+# =============================================================================
+# Installation Instructions
+# =============================================================================
+#
+# Basic installation (minimum required):
+#   pip install pytest pytest-cov pytest-mock
+#
+# Full installation (all features):
+#   pip install -r requirements-test.txt
+#
+# Verify installation:
+#   pytest --version
+#   pytest --co  # Collect tests without running
+#
+# =============================================================================
+# Usage
+# =============================================================================
+#
+# Run all pytest-style tests:
+#   pytest test/unit/pytest_test_*.py
+#
+# Run all tests (including unittest):
+#   pytest test/unit/
+#
+# Run with coverage:
+#   pytest --cov=src/flight-system/v2 --cov-report=html
+#
+# Run in parallel:
+#   pytest -n auto
+#
+# Generate HTML report:
+#   pytest --html=report.html
+#
+# =============================================================================
