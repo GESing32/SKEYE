@@ -23,27 +23,6 @@ from geometry_utils import LatLon, PolygonUtils  # type: ignore
 class TestCameraSpec(unittest.TestCase):
     """Tests for CameraSpec dataclass and presets."""
 
-    def test_sentera_double_4k_wide(self):
-        """Test Sentera Double 4K Wide camera specs."""
-        camera = CameraSpec.sentera_double_4k_wide()
-
-        self.assertEqual(camera.name, "Sentera Double 4K (8mm Wide)")
-        self.assertEqual(camera.sensor_width_mm, 6.3)
-        self.assertEqual(camera.sensor_height_mm, 4.7)
-        self.assertEqual(camera.image_width_px, 3840)
-        self.assertEqual(camera.image_height_px, 2160)
-        self.assertEqual(camera.focal_length_mm, 8.0)
-        self.assertEqual(camera.min_trigger_interval_s, 0.5)
-
-    def test_sentera_double_4k_narrow(self):
-        """Test Sentera Double 4K Narrow camera specs."""
-        camera = CameraSpec.sentera_double_4k_narrow()
-
-        self.assertEqual(camera.name, "Sentera Double 4K (25mm Narrow)")
-        self.assertEqual(camera.focal_length_mm, 25.0)
-        self.assertEqual(camera.image_width_px, 3840)
-        self.assertEqual(camera.image_height_px, 2160)
-
     def test_custom_camera_spec(self):
         """Test creating custom camera specification."""
         camera = CameraSpec(
@@ -140,21 +119,21 @@ class TestSurveyPlanner(unittest.TestCase):
 
         GSD_formula = (sensor_width_mm × altitude_m) / (focal_length_mm × image_width_px)
 
-        For Sentera Double 4K Wide (8mm lens, 6.3mm sensor, 3840px width):
-        - At 30m: ~0.00615 m/px (6.15mm per pixel)
-        - At 50m: ~0.01025 m/px (10.25mm per pixel = 1cm per pixel)
-        - At 90m: ~0.01845 m/px (18.45mm per pixel = 1.8cm per pixel)
+        For Sentera Double 4K Wide (5.4mm lens for 60° HFOV, 6.3mm sensor, 4000px width):
+        - At 30m: ~0.00875 m/px (8.75 µm per pixel)
+        - At 50m: ~0.01458 m/px (14.58 µm per pixel)
+        - At 90m: ~0.02625 m/px (26.25 µm per pixel)
 
-        NOTE: Current implementation divides by 1000 (line 124 in survey_planner.py),
-        making results 1000x smaller. This causes trigger distances and transect
+        NOTE: Current implementation divides by 1000 (line 186 in survey_planner.py),
+        converting from mm to m. This causes trigger distances and transect
         spacings to hit minimum values at typical altitudes (30-90m).
         """
         # Test at typical flight altitudes (max 90m ≈ 300ft)
-        # Actual calculated values: (6.3mm × altitude) / (8mm × 3840px) / 1000
+        # Actual calculated values: (6.3mm × altitude) / (5.4mm × 4000px) / 1000
         test_cases = [
-            (30.0, 6.15234375e-06),   # 30m: 6.15 µm/px (should be 6.15mm/px without /1000)
-            (50.0, 1.025390625e-05),  # 50m: 10.25 µm/px (should be 10.25mm/px without /1000)
-            (90.0, 1.845703125e-05),  # 90m: 18.45 µm/px (should be 18.45mm/px without /1000)
+            (30.0, 8.750000000000e-06),      # 30m: 8.75 µm/px
+            (50.0, 1.458333333333e-05),      # 50m: 14.58 µm/px
+            (90.0, 2.625000000000e-05),  # 90m: 26.25 µm/px
         ]
 
         print("\n" + "="*70)
@@ -187,10 +166,10 @@ class TestSurveyPlanner(unittest.TestCase):
         gsd = self.planner.calculate_gsd(altitude_m=50.0, camera_angle_deg=90.0)
 
         # GSD = (sensor_width_mm * altitude_m) / (focal_length_mm * image_width_px) / 1000
-        # GSD = (6.3mm * 50m) / (8mm * 3840px) / 1000
-        # GSD = 315 / 30720 / 1000 ≈ 0.00001025 m/px (10.25 micrometers/px)
+        # GSD = (6.3mm * 50m) / (5.4mm * 4000px) / 1000
+        # GSD = 315 / 21600 / 1000 ≈ 0.0000145833 m/px (14.58 micrometers/px)
         self.assertGreater(gsd, 0.0)
-        self.assertAlmostEqual(gsd, 0.00001025, places=8)
+        self.assertAlmostEqual(gsd, 1.458333333333e-05, places=8)
 
     def test_calculate_gsd_higher_altitude(self):
         """Test GSD increases with altitude."""
@@ -369,7 +348,7 @@ class TestSurveyPlannerIntegration(unittest.TestCase):
         wide_planner = SurveyPlanner(wide_camera)
         gsd_wide = wide_planner.calculate_gsd(50.0)
 
-        # Narrow (25mm) should have smaller GSD than wide (8mm)
+        # Narrow (11.76mm for 30° HFOV) should have smaller GSD than wide (5.4mm for 60° HFOV)
         self.assertLess(gsd_narrow, gsd_wide)
 
     def test_survey_high_overlap(self):

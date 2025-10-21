@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter test:*)",
+      "Read(//c/Users/niles/Downloads/**)",
+      "Bash(pytest:*)",
+      "Bash(python -m pytest test/unit/pytest_test_geometry_utils.py -v --collect-only)",
+      "Bash(find:*)",
+      "Bash(python3:*)",
+      "Bash(flutter --version:*)",
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(python -m pip install:*)",
+      "Bash(python:*)",
+      "Bash(move \"src\\flight-system\\v2\\ARCHITECTURE.md\" \"docs\\ARCHITECTURE.md\")",
+      "Bash(move \"src\\flight-system\\v2\\docs\\DOCUMENTATION.md\" \"docs\\DOCUMENTATION.md\")",
+      "Bash(move \"src\\flight-system\\v2\\docs\\SYSTEM_INTEGRATION_TESTS.md\" \"docs\\SYSTEM_INTEGRATION_TESTS.md\")",
+      "Bash(move \"test\\TESTING_GUIDE.md\" \"docs\\TESTING_GUIDE.md\")",
+      "Bash(move \"test\\TEST_RESULTS.md\" \"docs\\TEST_RESULTS.md\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

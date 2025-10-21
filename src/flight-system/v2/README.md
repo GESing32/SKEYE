@@ -74,15 +74,13 @@ src/flight-system/v2/
 
 ## Documentation
 
-📖 **Complete Guide:** [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md)
+📖 **Complete Documentation:** See [../../docs/](../../docs/) folder
 
-Includes:
-- Hardware connection diagrams
-- Software configuration
-- Survey planning tutorial
-- Troubleshooting guide
-- API reference
-- Complete changelog
+Key guides:
+- **[Complete User Guide](../../docs/DOCUMENTATION.md)** - Hardware setup, survey planning, troubleshooting
+- **[Architecture Overview](../../docs/ARCHITECTURE.md)** - System design and technical details
+- **[SITL Testing](../../docs/SITL_QUICKSTART.md)** - Safe testing without hardware
+- **[Testing Guide](../../docs/TESTING_GUIDE.md)** - Running tests and coverage
 
 ## Camera Specifications
 

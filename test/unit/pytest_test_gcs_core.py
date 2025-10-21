@@ -660,3 +660,297 @@ class TestComplexScenarios:
             # Verify all commands were sent
             assert mock_mav.mav.command_long_send.call_count == 2  # Speed + camera
             assert mock_mav.mav.set_position_target_global_int_send.call_count == 1
+
+
+# ============================================================================
+# Camera Trigger Command Tests (Coverage Improvement)
+# ============================================================================
+
+@pytest.mark.mavlink
+@pytest.mark.unit
+class TestCameraTriggerCommands:
+    """Tests for camera trigger commands (distance and interval based)."""
+
+    def test_do_set_cam_trigg_dist(self, mav_serial_core, mock_mav, mocker):
+        """Test camera trigger distance command."""
+        mocker.patch('gcs_core.mavutil.mavlink.MAV_CMD_DO_SET_CAM_TRIGG_DIST', 206)
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        mav_serial_core.do_set_cam_trigg_dist(distance_m=5.0, shutter=0.0, trigger_once=1)
+
+        mock_mav.mav.command_long_send.assert_called_once()
+        args = mock_mav.mav.command_long_send.call_args[0]
+        assert args[2] == 206  # MAV_CMD_DO_SET_CAM_TRIGG_DIST
+        assert args[4] == 5.0  # param1 = distance
+        assert args[5] == 0.0  # param2 = shutter
+        assert args[6] == 1.0  # param3 = trigger_once
+
+    @pytest.mark.parametrize("distance,trigger_once", [
+        (5.0, 1),
+        (10.0, 0),
+        (15.0, 1),
+        (0.0, 0),  # Stop triggering
+    ])
+    def test_do_set_cam_trigg_dist_parametrized(self, mav_serial_core, mock_mav, mocker,
+                                                 distance, trigger_once):
+        """Test camera trigger distance with various parameters."""
+        mocker.patch('gcs_core.mavutil.mavlink.MAV_CMD_DO_SET_CAM_TRIGG_DIST', 206)
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        mav_serial_core.do_set_cam_trigg_dist(distance_m=distance, trigger_once=trigger_once)
+
+        args = mock_mav.mav.command_long_send.call_args[0]
+        assert args[4] == float(distance)
+        assert args[6] == float(trigger_once)
+
+    def test_do_set_cam_trigg_interval(self, mav_serial_core, mock_mav, mocker):
+        """Test camera trigger interval command."""
+        mocker.patch('gcs_core.mavutil.mavlink.MAV_CMD_DO_SET_CAM_TRIGG_INTERVAL', 214)
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        mav_serial_core.do_set_cam_trigg_interval(interval_s=2.0, count=10)
+
+        mock_mav.mav.command_long_send.assert_called_once()
+        args = mock_mav.mav.command_long_send.call_args[0]
+        assert args[2] == 214  # MAV_CMD_DO_SET_CAM_TRIGG_INTERVAL
+        assert args[4] == 2.0  # param1 = interval
+        assert args[5] == 10.0  # param2 = count
+
+    @pytest.mark.parametrize("interval,count", [
+        (1.0, 0),     # Continuous (unlimited)
+        (2.0, 10),    # 10 photos
+        (0.5, 20),    # 20 photos at 0.5s interval
+        (-1.0, 0),    # Stop triggering
+    ])
+    def test_do_set_cam_trigg_interval_parametrized(self, mav_serial_core, mock_mav, mocker,
+                                                     interval, count):
+        """Test camera trigger interval with various parameters."""
+        mocker.patch('gcs_core.mavutil.mavlink.MAV_CMD_DO_SET_CAM_TRIGG_INTERVAL', 214)
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        mav_serial_core.do_set_cam_trigg_interval(interval_s=interval, count=count)
+
+        args = mock_mav.mav.command_long_send.call_args[0]
+        assert args[4] == float(interval)
+        assert args[5] == float(count)
+
+
+# ============================================================================
+# Mission Upload Tests (Coverage Improvement)
+# ============================================================================
+
+@pytest.mark.mavlink
+@pytest.mark.unit
+class TestMissionUpload:
+    """Tests for mission upload functionality."""
+
+    def test_mission_clear_all(self, mav_serial_core, mock_mav):
+        """Test mission clear command."""
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        mav_serial_core.mission_clear_all()
+
+        mock_mav.mav.mission_clear_all_send.assert_called_once_with(1, 1)
+
+    def test_mission_start(self, mav_serial_core, mock_mav, mocker):
+        """Test mission start command."""
+        mocker.patch('gcs_core.mavutil.mavlink.MAV_CMD_MISSION_START', 300)
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        mav_serial_core.mission_start(first_item=0, last_item=10)
+
+        mock_mav.mav.command_long_send.assert_called_once()
+        args = mock_mav.mav.command_long_send.call_args[0]
+        assert args[2] == 300  # MAV_CMD_MISSION_START
+        assert args[4] == 0  # first_item
+        assert args[5] == 10  # last_item
+
+    def test_mission_upload_begin(self, mav_serial_core, mock_mav):
+        """Test mission upload initialization."""
+        items = [
+            {"seq": 0, "command": 16, "x": 380000000, "y": -845000000, "z": 50.0},
+            {"seq": 1, "command": 16, "x": 380100000, "y": -845000000, "z": 50.0},
+        ]
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        mav_serial_core.mission_upload_begin(items)
+
+        # Should send mission count
+        mock_mav.mav.mission_count_send.assert_called_once_with(1, 1, 2)
+
+        # Verify internal state
+        assert mav_serial_core._mission_upload_in_progress is True
+        assert mav_serial_core._mission_expected_count == 2
+        assert len(mav_serial_core._mission_items_int) == 2
+
+    def test_handle_mission_request(self, mav_serial_core, mock_mav):
+        """Test handling mission request from autopilot."""
+        items = [
+            {
+                "seq": 0,
+                "command": 16,
+                "frame": 3,
+                "x": 380000000,
+                "y": -845000000,
+                "z": 50.0,
+                "param1": 0.0,
+                "param2": 2.0,
+                "param3": 0.0,
+                "param4": 0.0,
+                "current": 0,
+                "autocontinue": 1
+            }
+        ]
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+        mav_serial_core.mission_upload_begin(items)
+
+        # Simulate mission request from autopilot
+        request_msg = {"type": "MISSION_REQUEST_INT", "seq": 0}
+        mav_serial_core._handle_mission_request(request_msg)
+
+        # Should send mission item
+        mock_mav.mav.mission_item_int_send.assert_called_once()
+        args = mock_mav.mav.mission_item_int_send.call_args[0]
+        assert args[0] == 1  # target_system
+        assert args[1] == 1  # target_component
+        assert args[2] == 0  # seq
+        assert args[4] == 16  # command
+
+    def test_handle_mission_ack(self, mav_serial_core, mock_mav):
+        """Test handling mission acknowledgement."""
+        items = [{"seq": 0, "command": 16, "x": 380000000, "y": -845000000, "z": 50.0}]
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+        mav_serial_core.mission_upload_begin(items)
+
+        assert mav_serial_core._mission_upload_in_progress is True
+
+        # Simulate mission ACK
+        ack_msg = {"type": "MISSION_ACK"}
+        mav_serial_core._handle_mission_ack(ack_msg)
+
+        # Should clear upload state
+        assert mav_serial_core._mission_upload_in_progress is False
+        assert len(mav_serial_core._mission_items_int) == 0
+        assert mav_serial_core._mission_expected_count == 0
+
+    def test_process_protocol_side_effects_mission_request(self, mav_serial_core, mock_mav):
+        """Test process_protocol_side_effects handles mission requests."""
+        items = [
+            {
+                "seq": 0,
+                "command": 16,
+                "frame": 3,
+                "x": 380000000,
+                "y": -845000000,
+                "z": 50.0,
+                "param1": 0.0,
+                "param2": 2.0,
+                "param3": 0.0,
+                "param4": 0.0,
+                "current": 0,
+                "autocontinue": 1
+            }
+        ]
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+        mav_serial_core.mission_upload_begin(items)
+
+        # Process mission request via side effects
+        request_msg = {"type": "MISSION_REQUEST_INT", "seq": 0}
+        mav_serial_core.process_protocol_side_effects(request_msg)
+
+        # Should trigger mission item send
+        mock_mav.mav.mission_item_int_send.assert_called_once()
+
+    def test_process_protocol_side_effects_mission_ack(self, mav_serial_core, mock_mav):
+        """Test process_protocol_side_effects handles mission ACK."""
+        items = [{"seq": 0, "command": 16, "x": 380000000, "y": -845000000, "z": 50.0}]
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+        mav_serial_core.mission_upload_begin(items)
+
+        # Process mission ACK via side effects
+        ack_msg = {"type": "MISSION_ACK"}
+        mav_serial_core.process_protocol_side_effects(ack_msg)
+
+        # Should clear upload state
+        assert mav_serial_core._mission_upload_in_progress is False
+
+
+# ============================================================================
+# Error Handling and Edge Cases (Coverage Improvement)
+# ============================================================================
+
+@pytest.mark.mavlink
+@pytest.mark.unit
+class TestErrorHandling:
+    """Tests for error handling and edge cases."""
+
+    def test_on_heartbeat_mode_string_exception(self, mav_serial_core, mock_now, mocker):
+        """Test heartbeat processing handles mode_string exceptions."""
+        mock_now.return_value = 100.0
+        mocker.patch('gcs_core.mavutil.mode_string_v10', side_effect=Exception("Mode error"))
+
+        mock_msg = Mock()
+        mock_msg.base_mode = 0x80
+
+        # Should not raise exception
+        mav_serial_core._on_heartbeat(mock_msg)
+
+        # Mode string should remain UNKNOWN on error
+        assert mav_serial_core.mode_str == "UNKNOWN"
+        assert mav_serial_core.armed is True  # Other fields should still be processed
+
+    def test_handle_mission_request_not_in_progress(self, mav_serial_core, mock_mav):
+        """Test mission request handling when upload not in progress."""
+        mav_serial_core._mission_upload_in_progress = False
+
+        request_msg = {"type": "MISSION_REQUEST_INT", "seq": 0}
+        mav_serial_core._handle_mission_request(request_msg)
+
+        # Should not send anything
+        mock_mav.mav.mission_item_int_send.assert_not_called()
+
+    def test_handle_mission_request_invalid_seq(self, mav_serial_core, mock_mav):
+        """Test mission request with invalid sequence number."""
+        items = [{"seq": 0, "command": 16, "x": 380000000, "y": -845000000, "z": 50.0}]
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+        mav_serial_core.mission_upload_begin(items)
+
+        # Request invalid sequence
+        request_msg = {"type": "MISSION_REQUEST_INT", "seq": 99}
+        mav_serial_core._handle_mission_request(request_msg)
+
+        # Should not send anything
+        mock_mav.mav.mission_item_int_send.assert_not_called()
+
+    def test_handle_mission_ack_not_in_progress(self, mav_serial_core, mock_mav):
+        """Test mission ACK handling when upload not in progress."""
+        mav_serial_core._mission_upload_in_progress = False
+
+        ack_msg = {"type": "MISSION_ACK"}
+        mav_serial_core._handle_mission_ack(ack_msg)
+
+        # Should not cause errors (no-op)
+        assert mav_serial_core._mission_upload_in_progress is False

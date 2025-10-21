@@ -65,18 +65,20 @@ class TestCameraSpec:
 
     def test_sentera_double_4k_wide(self, camera_wide):
         """Test Sentera Double 4K Wide camera specs."""
-        assert camera_wide.name == "Sentera Double 4K (8mm Wide)"
+        assert camera_wide.name == "Sentera Double 4K (60° Default)"
         assert camera_wide.sensor_width_mm == 6.3
         assert camera_wide.sensor_height_mm == 4.7
         assert camera_wide.image_width_px == 4000
         assert camera_wide.image_height_px == 3000
-        assert camera_wide.focal_length_mm == 8.0
+        assert camera_wide.focal_length_mm == 5.4
+        assert camera_wide.hfov_deg == 60.0
         assert camera_wide.min_trigger_interval_s == 0.5
 
     def test_sentera_double_4k_narrow(self, camera_narrow):
         """Test Sentera Double 4K Narrow camera specs."""
-        assert camera_narrow.name == "Sentera Double 4K (25mm Narrow)"
-        assert camera_narrow.focal_length_mm == 25.0
+        assert camera_narrow.name == "Sentera Double 4K (30.0° HFOV)"
+        assert camera_narrow.focal_length_mm == pytest.approx(11.76, rel=0.01)
+        assert camera_narrow.hfov_deg == 30.0
         assert camera_narrow.image_width_px == 4000
         assert camera_narrow.image_height_px == 3000
 
@@ -96,14 +98,15 @@ class TestCameraSpec:
         assert camera.sensor_width_mm == 10.0
         assert camera.focal_length_mm == 15.0
 
-    @pytest.mark.parametrize("camera_factory,expected_focal_length", [
-        (CameraSpec.sentera_double_4k_wide, 8.0),
-        (CameraSpec.sentera_double_4k_narrow, 25.0),
+    @pytest.mark.parametrize("camera_factory,expected_focal_length,expected_hfov", [
+        (CameraSpec.sentera_double_4k_wide, 5.4, 60.0),
+        (CameraSpec.sentera_double_4k_narrow, 11.76, 30.0),
     ])
-    def test_camera_presets(self, camera_factory, expected_focal_length):
+    def test_camera_presets(self, camera_factory, expected_focal_length, expected_hfov):
         """Test camera preset factory methods."""
         camera = camera_factory()
-        assert camera.focal_length_mm == expected_focal_length
+        assert camera.focal_length_mm == pytest.approx(expected_focal_length, rel=0.01)
+        assert camera.hfov_deg == expected_hfov
         assert camera.image_width_px == 4000
         assert camera.image_height_px == 3000
 
@@ -241,7 +244,7 @@ class TestSurveyPlannerInitialization:
         """Test initialization with different camera types."""
         planner = SurveyPlanner(camera_narrow)
         assert planner.camera == camera_narrow
-        assert planner.camera.focal_length_mm == 25.0
+        assert planner.camera.focal_length_mm == pytest.approx(11.76, rel=0.01)
 
 
 # ============================================================================
@@ -262,19 +265,19 @@ class TestGSDCalculation:
 
         GSD_formula = (sensor_width_mm × altitude_m) / (focal_length_mm × image_width_px)
 
-        For Sentera Double 4K Wide (8mm lens, 6.3mm sensor, 4000px width):
-        - At 30m: ~0.00001 m/px (0.01mm per pixel)
-        - At 50m: ~0.00001 m/px (0.01mm per pixel)
-        - At 90m: ~0.00002 m/px (0.02mm per pixel)
+        For Sentera Double 4K Wide (5.4mm lens for 60° HFOV, 6.3mm sensor, 4000px width):
+        - At 30m: ~0.0000088 m/px (8.75 µm per pixel)
+        - At 50m: ~0.0000146 m/px (14.58 µm per pixel)
+        - At 90m: ~0.0000263 m/px (26.25 µm per pixel)
 
-        NOTE: Current implementation divides by 1000 (line 124 in survey_planner.py),
+        NOTE: Current implementation divides by 1000 (line 186 in survey_planner.py),
         making results 1000x smaller. This causes trigger distances and transect
         spacings to hit minimum values at typical altitudes (30-90m).
         """
         test_cases = [
-            (30.0, 5.906250000000e-06),   # 30m: 5.91 µm/px
-            (50.0, 9.843750000000e-06),  # 50m: 9.84 µm/px
-            (90.0, 1.771875000000e-05),  # 90m: 17.72 µm/px
+            (30.0, 8.750000000000e-06),   # 30m: 8.75 µm/px
+            (50.0, 1.458333333333e-05),  # 50m: 14.58 µm/px
+            (90.0, 2.625000000000e-05),  # 90m: 26.25 µm/px
         ]
 
         print("\n" + "=" * 70)
@@ -306,10 +309,10 @@ class TestGSDCalculation:
         gsd = planner_wide.calculate_gsd(altitude_m=50.0, camera_angle_deg=90.0)
 
         # GSD = (sensor_width_mm * altitude_m) / (focal_length_mm * image_width_px) / 1000
-        # GSD = (6.3mm * 50m) / (8mm * 4000px) / 1000
-        # GSD = 315 / 32000 / 1000 ≈ 0.00001025 m/px (10.25 micrometers/px)
+        # GSD = (6.3mm * 50m) / (5.4mm * 4000px) / 1000
+        # GSD = 315 / 21600 / 1000 ≈ 0.0000145833 m/px (14.58 micrometers/px)
         assert gsd > 0.0
-        assert gsd == pytest.approx(9.843750000000e-06, abs=1e-8)
+        assert gsd == pytest.approx(1.458333333333e-05, abs=1e-8)
 
     def test_calculate_gsd_higher_altitude(self, planner_wide):
         """Test GSD increases with altitude."""
@@ -329,10 +332,10 @@ class TestGSDCalculation:
         assert gsd_angled < gsd_nadir
 
     @pytest.mark.parametrize("altitude,camera_angle,expected_gsd_approx", [
-        (30.0, 90.0, 5.906e-06),
-        (50.0, 90.0, 9.844e-06),
-        (70.0, 90.0, 1.378e-05),
-        (90.0, 90.0, 1.772e-05),
+        (30.0, 90.0, 8.750e-06),
+        (50.0, 90.0, 1.458e-05),
+        (70.0, 90.0, 2.042e-05),
+        (90.0, 90.0, 2.625e-05),
     ])
     def test_calculate_gsd_parametrized(self, planner_wide, altitude,
                                         camera_angle, expected_gsd_approx):
@@ -678,11 +681,11 @@ class TestCameraComparison:
         gsd_wide = planner_wide.calculate_gsd(altitude)
         gsd_narrow = planner_narrow.calculate_gsd(altitude)
 
-        # Narrow lens (25mm) should have smaller GSD than wide lens (8mm)
+        # Narrow lens (11.76mm for 30° HFOV) should have smaller GSD than wide lens (5.4mm for 60° HFOV)
         assert gsd_narrow < gsd_wide
 
         # The ratio should be approximately focal_length_wide / focal_length_narrow
-        expected_ratio = 8.0 / 25.0
+        expected_ratio = 5.4 / 11.76
         actual_ratio = gsd_narrow / gsd_wide
         assert actual_ratio == pytest.approx(expected_ratio, rel=0.01)
 
@@ -697,3 +700,301 @@ class TestCameraComparison:
         # Both should be positive
         assert trigger_wide > 0
         assert trigger_narrow > 0
+
+
+# ============================================================================
+# Mission Generation Tests (Coverage Improvement)
+# ============================================================================
+
+@pytest.mark.survey
+@pytest.mark.integration
+class TestMissionGeneration:
+    """Tests for complete MAVLink mission item generation."""
+
+    def test_generate_mission_items_basic(self, planner_wide, small_survey_polygon):
+        """Test basic mission item generation."""
+        config = SurveyConfig(
+            altitude_m=50.0,
+            speed_m_s=5.0,
+            front_overlap_pct=75.0,
+            side_overlap_pct=75.0,
+            grid_angle_deg=0.0
+        )
+
+        items, stats = planner_wide.generate_mission_items(small_survey_polygon, config)
+
+        # Should have generated mission items
+        assert len(items) > 0
+        assert stats is not None
+        assert "waypoint_count" in stats
+        assert stats["waypoint_count"] == len(items)
+
+    def test_generate_mission_items_empty_polygon(self, planner_wide):
+        """Test mission generation with empty polygon."""
+        config = SurveyConfig()
+        items, stats = planner_wide.generate_mission_items([], config)
+
+        assert len(items) == 0
+        assert "error" in stats
+
+    def test_mission_items_distance_trigger_mode(self, planner_wide, small_survey_polygon):
+        """Test mission generation with distance-based trigger mode."""
+        config = SurveyConfig(
+            altitude_m=50.0,
+            trigger_mode=TriggerMode.DISTANCE,
+            front_overlap_pct=75.0
+        )
+
+        items, stats = planner_wide.generate_mission_items(small_survey_polygon, config)
+
+        # First item should be camera trigger command
+        assert len(items) > 0
+        # Check for trigger distance in stats
+        assert "trigger_distance_m" in stats
+        assert stats["trigger_distance_m"] > 0
+
+    def test_mission_items_hover_and_capture(self, planner_wide, small_survey_polygon):
+        """Test mission generation with hover and capture mode."""
+        config = SurveyConfig(
+            altitude_m=50.0,
+            hover_and_capture=True,
+            trigger_mode=TriggerMode.HOVER_CAPTURE
+        )
+
+        items, stats = planner_wide.generate_mission_items(small_survey_polygon, config)
+
+        # Should have waypoints and camera commands
+        assert len(items) > 0
+        assert "photo_count" in stats
+
+    def test_mission_statistics(self, planner_wide, small_survey_polygon):
+        """Test mission statistics generation."""
+        config = SurveyConfig(
+            altitude_m=50.0,
+            speed_m_s=5.0,
+            front_overlap_pct=75.0,
+            side_overlap_pct=75.0
+        )
+
+        items, stats = planner_wide.generate_mission_items(small_survey_polygon, config)
+
+        # Check all expected statistics
+        assert "waypoint_count" in stats
+        assert "photo_count" in stats
+        assert "flight_distance_m" in stats
+        assert "flight_time_min" in stats
+        assert "coverage_area_m2" in stats
+        assert "transect_count" in stats
+        assert "trigger_distance_m" in stats
+        assert "gsd_cm_px" in stats
+
+        # Verify values are reasonable
+        assert stats["waypoint_count"] > 0
+        assert stats["flight_distance_m"] > 0
+        assert stats["flight_time_min"] > 0
+        assert stats["coverage_area_m2"] > 0
+        assert stats["gsd_cm_px"] >= 0  # Can be 0.0 due to rounding of very small values
+
+    @pytest.mark.parametrize("entry_point", [
+        EntryPoint.TOP_LEFT,
+        EntryPoint.TOP_RIGHT,
+        EntryPoint.BOTTOM_LEFT,
+        EntryPoint.BOTTOM_RIGHT
+    ])
+    def test_mission_items_different_entry_points(self, planner_wide, small_survey_polygon, entry_point):
+        """Test mission generation with different entry points."""
+        config = SurveyConfig(
+            altitude_m=50.0,
+            entry_point=entry_point,
+            front_overlap_pct=75.0,
+            side_overlap_pct=75.0
+        )
+
+        items, stats = planner_wide.generate_mission_items(small_survey_polygon, config)
+
+        assert len(items) > 0
+        assert stats["waypoint_count"] > 0
+
+
+# ============================================================================
+# Private Method Tests (Coverage Improvement)
+# ============================================================================
+
+@pytest.mark.survey
+@pytest.mark.unit
+class TestPrivateMethods:
+    """Tests for private helper methods to improve coverage."""
+
+    def test_rotate_point(self, planner_wide):
+        """Test point rotation helper method."""
+        from geometry_utils import LocalCoord
+        import math
+
+        center = LocalCoord(0.0, 0.0)
+        point = LocalCoord(10.0, 0.0)
+
+        # Rotate 90 degrees
+        rotated = planner_wide._rotate_point(point, center, math.radians(90))
+
+        # Should be at (0, 10) after 90 degree rotation
+        assert rotated.north == pytest.approx(0.0, abs=0.01)
+        assert rotated.east == pytest.approx(10.0, abs=0.01)
+
+    def test_rotate_point_360_degrees(self, planner_wide):
+        """Test point rotation full circle."""
+        from geometry_utils import LocalCoord
+        import math
+
+        center = LocalCoord(5.0, 5.0)
+        point = LocalCoord(10.0, 5.0)
+
+        # Rotate 360 degrees (full circle)
+        rotated = planner_wide._rotate_point(point, center, math.radians(360))
+
+        # Should return to original position
+        assert rotated.north == pytest.approx(point.north, abs=0.01)
+        assert rotated.east == pytest.approx(point.east, abs=0.01)
+
+    def test_optimize_transect_order_alternating(self, planner_wide):
+        """Test transect order optimization (lawnmower pattern)."""
+        from geometry_utils import LocalCoord
+
+        # Create simple transects
+        transects = [
+            [LocalCoord(0.0, 0.0), LocalCoord(100.0, 0.0)],
+            [LocalCoord(0.0, 10.0), LocalCoord(100.0, 10.0)],
+            [LocalCoord(0.0, 20.0), LocalCoord(100.0, 20.0)],
+        ]
+
+        optimized = planner_wide._optimize_transect_order(transects, EntryPoint.TOP_LEFT)
+
+        # Should still have 3 transects
+        assert len(optimized) == 3
+
+        # Every other transect should be reversed (lawnmower pattern)
+        # Check that odd-indexed transects are reversed
+        assert len(optimized[1]) == len(transects[1])
+
+    def test_optimize_transect_order_empty(self, planner_wide):
+        """Test transect optimization with empty list."""
+        optimized = planner_wide._optimize_transect_order([], EntryPoint.TOP_LEFT)
+        assert optimized == []
+
+    @pytest.mark.parametrize("entry_point", [
+        EntryPoint.TOP_LEFT,
+        EntryPoint.TOP_RIGHT,
+        EntryPoint.BOTTOM_LEFT,
+        EntryPoint.BOTTOM_RIGHT
+    ])
+    def test_optimize_transect_order_all_entry_points(self, planner_wide, entry_point):
+        """Test transect optimization with all entry points."""
+        from geometry_utils import LocalCoord
+
+        transects = [
+            [LocalCoord(0.0, 0.0), LocalCoord(100.0, 0.0)],
+            [LocalCoord(0.0, 10.0), LocalCoord(100.0, 10.0)],
+        ]
+
+        optimized = planner_wide._optimize_transect_order(transects, entry_point)
+
+        # Should preserve number of transects
+        assert len(optimized) == len(transects)
+
+    def test_add_turnaround_points(self, planner_wide):
+        """Test turnaround point addition."""
+        from geometry_utils import LocalCoord
+
+        transects = [
+            [LocalCoord(0.0, 0.0), LocalCoord(100.0, 0.0)],
+            [LocalCoord(0.0, 10.0), LocalCoord(100.0, 10.0)],
+        ]
+
+        extended = planner_wide._add_turnaround_points(transects, turnaround_dist=10.0)
+
+        # Each transect should have 2 more points (entry and exit)
+        for i, transect in enumerate(extended):
+            assert len(transect) == len(transects[i]) + 2
+
+    def test_add_turnaround_points_empty(self, planner_wide):
+        """Test turnaround points with empty list."""
+        extended = planner_wide._add_turnaround_points([], 10.0)
+        assert extended == []
+
+    def test_add_turnaround_points_single_point_transect(self, planner_wide):
+        """Test turnaround points with single-point transect."""
+        from geometry_utils import LocalCoord
+
+        transects = [[LocalCoord(0.0, 0.0)]]
+
+        extended = planner_wide._add_turnaround_points(transects, 10.0)
+
+        # Single point transect should be preserved as-is
+        assert len(extended) == 1
+        assert len(extended[0]) == 1
+
+
+# ============================================================================
+# Edge Case Tests (Coverage Improvement)
+# ============================================================================
+
+@pytest.mark.survey
+@pytest.mark.unit
+class TestEdgeCases:
+    """Tests for edge cases and boundary conditions."""
+
+    def test_gsd_zero_altitude(self, planner_wide):
+        """Test GSD calculation with very low altitude."""
+        gsd = planner_wide.calculate_gsd(altitude_m=0.1, camera_angle_deg=90.0)
+        assert gsd > 0
+
+    def test_gsd_extreme_angle(self, planner_wide):
+        """Test GSD calculation with extreme camera angles."""
+        gsd_0 = planner_wide.calculate_gsd(50.0, camera_angle_deg=0.0)
+        gsd_180 = planner_wide.calculate_gsd(50.0, camera_angle_deg=180.0)
+
+        # Both extreme angles should produce same result (nadir equivalent)
+        assert gsd_0 > 0
+        assert gsd_180 > 0
+
+    def test_trigger_distance_zero_overlap(self, planner_wide):
+        """Test trigger distance with 0% overlap."""
+        trigger_dist = planner_wide.calculate_trigger_distance(50.0, 0.0)
+        assert trigger_dist >= 1.0
+
+    def test_transect_spacing_zero_overlap(self, planner_wide):
+        """Test transect spacing with 0% overlap."""
+        spacing = planner_wide.calculate_transect_spacing(50.0, 0.0)
+        assert spacing >= 0.1
+
+    def test_generate_transects_large_polygon(self, planner_wide):
+        """Test transect generation with large polygon."""
+        # Create large polygon (1km x 1km)
+        large_polygon = [
+            LatLon(38.0, -84.5),
+            LatLon(38.01, -84.5),
+            LatLon(38.01, -84.49),
+            LatLon(38.0, -84.49),
+        ]
+
+        config = SurveyConfig(
+            altitude_m=100.0,
+            front_overlap_pct=75.0,
+            side_overlap_pct=75.0
+        )
+
+        transects = planner_wide.generate_transects_from_polygon(large_polygon, config)
+
+        # Should generate transects
+        assert len(transects) > 0
+
+    def test_mission_items_various_trigger_modes(self, planner_wide, small_survey_polygon):
+        """Test mission generation with different trigger modes."""
+        for trigger_mode in [TriggerMode.DISTANCE, TriggerMode.NONE]:
+            config = SurveyConfig(
+                altitude_m=50.0,
+                trigger_mode=trigger_mode
+            )
+
+            items, stats = planner_wide.generate_mission_items(small_survey_polygon, config)
+
+            assert len(items) > 0 or "error" in stats

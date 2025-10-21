@@ -653,12 +653,12 @@ import 'package:v2/models/camera_config.dart';
 final camera = CameraConfig.senteraDouble4K_Wide;
 
 // Camera properties
-camera.name              // "Sentera Double 4K (8mm Wide)"
+camera.name              // "Sentera Double 4K"
 camera.sensorWidth       // 6.3 mm
 camera.sensorHeight      // 4.7 mm
-camera.focalLength       // 8.0 mm
-camera.imageWidth        // 3840 px
-camera.imageHeight       // 2160 px
+camera.focalLength       // 5.2 mm
+camera.imageWidth        // 4000 px
+camera.imageHeight       // 3000 px
 
 // Calculate GSD
 final gsd = camera.calculateGSD(50.0);  // 0.98 cm/pixel

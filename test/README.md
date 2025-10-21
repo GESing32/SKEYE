@@ -1,14 +1,15 @@
 # SKEYE Flight System - Test Suite
 
-Comprehensive test suite for the SKEYE flight system, including unit tests, widget tests, and integration tests for both Python backend and Flutter/Dart frontend.
+Comprehensive test suite for the SKEYE flight system, including unit tests, widget tests, integration tests, and SITL testing for both Python backend and Flutter/Dart frontend.
 
 ## Overview
 
-The test suite is organized into three main categories:
+The test suite is organized into four main categories:
 
 1. **Unit Tests** - Test individual components and functions in isolation
 2. **Widget Tests** - Test Flutter UI components and interactions
 3. **Integration Tests** - Test complete workflows and system integration
+4. **SITL Tests** - Test with Software In The Loop simulation (see [SITL Testing](#sitl-testing))
 
 ## Directory Structure
 
@@ -27,6 +28,67 @@ test/
 │   └── pytest_test_survey_planner.py     # Python survey tests (pytest)
 └── integration/                           # Integration tests
     └── gcs_integration_test.dart         # GCS workflow integration tests
+```
+
+## SITL Testing
+
+### Quick Start SITL Testing
+
+SKEYE supports **Software In The Loop (SITL)** testing for safe testing without real hardware.
+
+**5-Minute Quick Start:**
+```bash
+# 1. Start Mission Planner simulator (GUI: Simulation → Start Simulation)
+# 2. Start SKEYE GCS in SITL mode
+start_gcs_sitl.bat
+
+# 3. Start Flutter UI
+cd src\flight-system\v2
+flutter run -d windows
+```
+
+**For detailed SITL setup and troubleshooting:**
+- Quick Start: [../docs/SITL_QUICKSTART.md](../docs/SITL_QUICKSTART.md)
+- Complete Guide: [../docs/SITL_TESTING_GUIDE.md](../docs/SITL_TESTING_GUIDE.md)
+- Testing Guide: [../docs/TESTING_GUIDE.md](../docs/TESTING_GUIDE.md)
+- Test Results: [../docs/TEST_RESULTS.md](../docs/TEST_RESULTS.md)
+
+### SITL Test Scenarios
+
+#### Basic Connection Test
+```bash
+# Start Mission Planner SITL
+# (Launch Mission Planner → Simulation → Multirotor → Start Simulation)
+
+# Connect SKEYE (in command prompt)
+set GCS_SERIAL=tcp:127.0.0.1:5760
+python src\flight-system\v2\run_gcs.py
+
+# Expected: "Connected: sys=1, comp=1, mode=STABILIZE"
+```
+
+#### Survey Planning Test with SITL
+1. Start Mission Planner SITL simulator
+2. Start SKEYE GCS backend
+3. Start Flutter UI
+4. Draw polygon on map
+5. Generate survey mission
+6. Upload to SITL
+7. Arm and switch to AUTO mode
+8. Verify mission execution in SITL (watch in Mission Planner map)
+
+#### Automated SITL Test Script
+```python
+# test/sitl/test_sitl_connection.py (create this)
+import pytest
+from pymavlink import mavutil
+
+def test_sitl_connection():
+    """Test connection to SITL simulator."""
+    conn = mavutil.mavlink_connection('tcp:127.0.0.1:5760')
+    msg = conn.wait_heartbeat(timeout=10)
+    assert msg is not None, "No heartbeat from SITL"
+    assert msg.get_type() == 'HEARTBEAT'
 ```
 
 ## Running Tests
@@ -336,26 +398,6 @@ def test_coordinate_conversion(instance):
     assert result is not None
 ```
 
-**pytest Fixture Examples:**
-
-```python
-# Shared fixtures in conftest.py are auto-discovered
-# Use by including as function parameter
-
-def test_with_camera(camera_wide):
-    """Uses camera_wide fixture from conftest.py."""
-    assert camera_wide.focal_length_mm == 8.0
-
-def test_with_location(uk_campus):
-    """Uses uk_campus fixture from conftest.py."""
-    assert uk_campus.lat == pytest.approx(38.0336)
-
-# Parametrized fixtures run test multiple times
-def test_all_cameras(any_camera):
-    """Runs once for each camera type."""
-    assert any_camera.image_width_px > 0
-```
-
 ### Flutter Widget Tests
 
 ```dart
@@ -395,25 +437,6 @@ Tests should be run:
 - In CI/CD pipeline
 - Before merging pull requests
 
-### Pre-commit Hook
-
-Add to `.git/hooks/pre-commit`:
-
-```bash
-#!/bin/sh
-# Run Python tests
-echo "Running Python tests..."
-cd src/flight-system/v2
-python run_tests.py -q || exit 1
-
-# Run Flutter tests
-echo "Running Flutter tests..."
-cd ../../..
-flutter test || exit 1
-
-echo "All tests passed!"
-```
-
 ## Test Data
 
 ### Test Coordinates
@@ -426,14 +449,6 @@ echo "All tests passed!"
 - **Sentera Double 4K Narrow:** 25mm lens, 3840×2160
 
 ## Troubleshooting
-
-### Python Tests Fail to Import Modules
-
-Ensure you're running from the correct directory:
-```bash
-cd src/flight-system/v2
-python run_tests.py
-```
 
 ### Flutter Tests Fail to Find Widgets
 
@@ -461,44 +476,6 @@ When adding new features:
 4. Update this README if adding new test categories
 
 ## unittest vs pytest Comparison
-
-### Quick Comparison
-
-| Feature | unittest | pytest |
-|---------|----------|--------|
-| Installation | Built-in | `pip install pytest` |
-| Test structure | Class-based | Function or class-based |
-| Assertions | `self.assertEqual()` | Native `assert` |
-| Fixtures | `setUp()`/`tearDown()` | `@pytest.fixture` with DI |
-| Parametrization | `subTest` | `@pytest.mark.parametrize` |
-| Output | Good | Excellent (detailed) |
-| Parallel execution | Manual | Built-in (`-n auto`) |
-| Markers | Limited | Powerful (`@pytest.mark.*`) |
-| Plugins | Few | Extensive ecosystem |
-
-### Side-by-Side Example
-
-**unittest style:**
-```python
-class TestGeodetic(unittest.TestCase):
-    def setUp(self):
-        self.coord = LatLon(38.0, -84.5)
-
-    def test_distance(self):
-        dist = GeodeticUtils.haversine_distance(self.coord, self.coord)
-        self.assertAlmostEqual(dist, 0.0, places=5)
-```
-
-**pytest style:**
-```python
-@pytest.fixture
-def coord():
-    return LatLon(38.0, -84.5)
-
-def test_distance(coord):
-    dist = GeodeticUtils.haversine_distance(coord, coord)
-    assert dist == pytest.approx(0.0, abs=1e-5)
-```
 
 ### Migration Strategy
 
