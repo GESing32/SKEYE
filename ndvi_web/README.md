@@ -105,7 +105,7 @@ RUNNING THE PROJECT (FULL PIPELINE)
 
    This launches the UI in Chrome and connects to http://127.0.0.1:8000
 
-6. Run the HTML web interface (Option B)
+6. Run the HTML web interface (Option B - easiest in my opinion)
    cd ndvi_web/web
    python -m http.server 5500
    Open browser: http://localhost:5500/index.html

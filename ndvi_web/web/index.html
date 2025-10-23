@@ -4,20 +4,37 @@
 <head>
     <meta charset="utf-8" />
     <title>SKEYE | NDVI Web</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="assets/skeye-logo.jpg" />
+    <meta property="og:image" content="assets/skeye-logo.jpg" />
+    <meta name="theme-color" content="#5e9445" />
+
     <style>
         :root {
-            --bg: #0b0f14;
-            --panel: #101621;
-            --card: #0f1520;
-            --line: #202837;
-            --muted: #9aa5b1;
-            --text: #e6edf3;
-            --accent: #34d399;
-            --accent2: #60a5fa;
+            /* SKEYE brand greens */
+            --brand-light: #d5e0cb;
+            --brand-muted: #95b684;
+            --brand-bright: #7ec041;
+            /* leaf highlight */
+            --brand-mid: #5e9445;
+            /* main green */
+            --brand-deep: #3e5f44;
+            /* dark green */
+
+            /* app tokens that the rest of the CSS uses */
+            --bg: #0e1511;
+            /* deep green-black */
+            --panel: #0f1c13;
+            --card: #0f1a13;
+            --line: #203425;
+            --muted: var(--brand-muted);
+            --text: #eef5ee;
+
+            --accent: var(--brand-bright);
+            --accent2: var(--brand-mid);
             --warn: #eab308;
             --danger: #ef4444;
         }
+
 
         * {
             box-sizing: border-box
@@ -25,12 +42,12 @@
 
         body {
             margin: 0;
-            background:
-                radial-gradient(1200px 600px at 20% -10%, #1a2333 0%, transparent 60%),
-                radial-gradient(1000px 500px at 120% 0%, #0d2430 0%, transparent 60%),
-                var(--bg);
             color: var(--text);
             font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+            background:
+                radial-gradient(1200px 600px at 20% -10%, rgba(75, 218, 101, 0.696) 0%, transparent 60%),
+                radial-gradient(1000px 500px at 120% 0%, rgb(94, 134, 101) 0%, transparent 60%),
+                var(--bg);
         }
 
         .wrap {
@@ -64,13 +81,23 @@
         }
 
         .logo {
-            width: 38px;
-            height: 38px;
+            width: 55px;
+            height: 61px;
             border-radius: 12px;
-            background: conic-gradient(from 120deg, var(--accent), #6ee7b7, #22d3ee 65%, var(--accent2));
-            box-shadow: 0 6px 18px rgba(52, 211, 153, .35);
-            border: 1px solid #1f2a37;
+            overflow: hidden;
+            background: #fff;
+            border: 1px solid #1f2a1b;
+            box-shadow: 0 6px 18px rgba(94, 148, 69, .35);
+            display: grid;
+            place-items: center;
         }
+
+        .logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
 
         h1 {
             margin: 0;
@@ -130,13 +157,25 @@
 
         button {
             border: 0;
-            background: linear-gradient(90deg, #34d399, #6ee7b7);
-            color: #0b1110;
+            cursor: pointer;
             font-weight: 800;
             padding: 10px 14px;
             border-radius: 10px;
-            cursor: pointer
+            color: #0e150f;
+            background: linear-gradient(90deg, var(--accent), var(--accent2));
+            box-shadow: 0 10px 24px rgba(126, 192, 65, .28);
         }
+
+        .top-tab {
+            background: linear-gradient(180deg, #0f1a13, #0e1611);
+        }
+
+        .top-tab.active {
+            background: #0e1711;
+            outline: 2px solid rgba(126, 192, 65, .35);
+            border-color: #2a3d2b;
+        }
+
 
         button:disabled {
             opacity: .6;
@@ -312,12 +351,15 @@
             <!-- Header / Nav -->
             <div class="header">
                 <div class="brand">
-                    <div class="logo" aria-hidden="true"></div>
+                    <div class="logo">
+                        <img src="assets/skeye-logo.jpg" alt="SKEYE logo" />
+                    </div>
                     <div>
                         <h1>SKEYE • NDVI & Mission UI</h1>
                         <div class="muted">Autonomous crop monitoring • NDVI/NDRE analytics • Geo-stitch preview</div>
                     </div>
                 </div>
+
                 <div class="top-tabs">
                     <div class="top-tab active" data-page="welcome">Welcome</div>
                     <div class="top-tab" data-page="ndvi">NDVI Detection</div>
