@@ -1,6 +1,6 @@
 """
-Unit tests for survey_planner module.
-Tests survey planning, camera specifications, and mission generation.
+Unit tests for survey_planner module - FIXED for correct GSD values.
+Tests now expect proper GSD calculations without the /1000 bug.
 """
 
 import unittest
@@ -8,11 +8,10 @@ import math
 import sys
 from pathlib import Path
 
-# Add v2 directory to path for imports
+# Add v2 directory to path
 v2_path = Path(__file__).parent.parent.parent / "src" / "flight-system" / "v2"
 sys.path.insert(0, str(v2_path))
 
-# Import from v2 directory (runtime resolution)
 from survey_planner import (  # type: ignore
     CameraSpec, SurveyConfig, SurveyPlanner,
     EntryPoint, TriggerMode
@@ -99,7 +98,7 @@ class TestSurveyConfig(unittest.TestCase):
 
 
 class TestSurveyPlanner(unittest.TestCase):
-    """Tests for SurveyPlanner class."""
+    """Tests for SurveyPlanner class - FIXED expectations."""
 
     def setUp(self):
         """Set up test fixtures."""
@@ -112,64 +111,48 @@ class TestSurveyPlanner(unittest.TestCase):
 
     def test_gsd_realistic_values(self):
         """
-        Test GSD calculation produces realistic values for aerial photography.
-
-        GSD (Ground Sample Distance) is the physical distance on the ground
-        that one pixel represents. For a camera pointing straight down (nadir):
-
-        GSD_formula = (sensor_width_mm × altitude_m) / (focal_length_mm × image_width_px)
-
-        For Sentera Double 4K Wide (5.4mm lens for 60° HFOV, 6.3mm sensor, 4000px width):
-        - At 30m: ~0.00875 m/px (8.75 µm per pixel)
-        - At 50m: ~0.01458 m/px (14.58 µm per pixel)
-        - At 90m: ~0.02625 m/px (26.25 µm per pixel)
-
-        NOTE: Current implementation divides by 1000 (line 186 in survey_planner.py),
-        converting from mm to m. This causes trigger distances and transect
-        spacings to hit minimum values at typical altitudes (30-90m).
+        Test GSD calculation produces CORRECT realistic values.
+        
+        Expected values (FIXED - removed /1000 bug):
+        - At 30m: 0.00875 m/px = 0.875 cm/px
+        - At 50m: 0.014583 m/px = 1.458 cm/px
+        - At 90m: 0.02625 m/px = 2.625 cm/px
         """
-        # Test at typical flight altitudes (max 90m ≈ 300ft)
-        # Actual calculated values: (6.3mm × altitude) / (5.4mm × 4000px) / 1000
         test_cases = [
-            (30.0, 8.750000000000e-06),      # 30m: 8.75 µm/px
-            (50.0, 1.458333333333e-05),      # 50m: 14.58 µm/px
-            (90.0, 2.625000000000e-05),  # 90m: 26.25 µm/px
+            (30.0, 0.875),   # 30m: 0.875 cm/px (CORRECT)
+            (50.0, 1.458),   # 50m: 1.458 cm/px (CORRECT)
+            (90.0, 2.625),   # 90m: 2.625 cm/px (CORRECT)
         ]
 
         print("\n" + "="*70)
-        print("GSD Analysis for Sentera Double 4K Wide Camera")
+        print("GSD Analysis - FIXED VALUES")
         print("="*70)
 
-        for altitude, expected_gsd in test_cases:
+        for altitude, expected_gsd_cm in test_cases:
             with self.subTest(altitude=altitude):
-                gsd = self.planner.calculate_gsd(altitude_m=altitude, camera_angle_deg=90.0)
+                gsd_cm = self.planner.calculate_gsd(altitude_m=altitude, camera_angle_deg=90.0)
 
-                # Verify GSD matches expected value (with current /1000)
-                self.assertAlmostEqual(gsd, expected_gsd, places=10)
+                # Verify GSD matches expected (in cm/px)
+                self.assertAlmostEqual(gsd_cm, expected_gsd_cm, places=3)
 
-                # Calculate image footprint on ground
-                footprint_width = gsd * self.camera.image_width_px
-                footprint_height = gsd * self.camera.image_height_px
-                coverage_area = footprint_width * footprint_height
+                # Calculate footprint
+                footprint_width = (gsd_cm / 100.0) * self.camera.image_width_px
+                footprint_height = (gsd_cm / 100.0) * self.camera.image_height_px
 
                 print(f"\nAltitude: {altitude}m")
-                print(f"  GSD: {gsd*1000000:.2f} µm/px (current)")
-                print(f"  GSD: {gsd*1000:.3f} mm/px (current)")
-                print(f"  Expected GSD: {gsd*1000000:.2f} mm/px (without extra /1000)")
-                print(f"  Image footprint: {footprint_width:.4f}m × {footprint_height:.4f}m")
-                print(f"  Coverage area: {coverage_area:.6f} m²")
+                print(f"  GSD: {gsd_cm:.3f} cm/px (CORRECT)")
+                print(f"  Footprint: {footprint_width:.1f}m × {footprint_height:.1f}m")
 
         print("="*70)
 
     def test_calculate_gsd_nadir(self):
-        """Test GSD calculation for nadir (straight down) camera."""
-        gsd = self.planner.calculate_gsd(altitude_m=50.0, camera_angle_deg=90.0)
+        """Test GSD calculation for nadir - FIXED expectation."""
+        gsd_cm = self.planner.calculate_gsd(altitude_m=50.0, camera_angle_deg=90.0)
 
-        # GSD = (sensor_width_mm * altitude_m) / (focal_length_mm * image_width_px) / 1000
-        # GSD = (6.3mm * 50m) / (5.4mm * 4000px) / 1000
-        # GSD = 315 / 21600 / 1000 ≈ 0.0000145833 m/px (14.58 micrometers/px)
-        self.assertGreater(gsd, 0.0)
-        self.assertAlmostEqual(gsd, 1.458333333333e-05, places=8)
+        # FIXED: Expect 1.458 cm/px, NOT 0.00001458 m/px
+        # GSD = (6.3mm * 50m * 1000) / (5.4mm * 4000px) / 10 = 1.458 cm/px
+        self.assertGreater(gsd_cm, 0.0)
+        self.assertAlmostEqual(gsd_cm, 1.458, places=3)
 
     def test_calculate_gsd_higher_altitude(self):
         """Test GSD increases with altitude."""
@@ -177,8 +160,8 @@ class TestSurveyPlanner(unittest.TestCase):
         gsd_100m = self.planner.calculate_gsd(altitude_m=100.0)
 
         # GSD should double when altitude doubles
-        self.assertAlmostEqual(gsd_100m, gsd_50m * 2, places=5)
-
+        self.assertAlmostEqual(gsd_100m, gsd_50m * 2, places=2)
+        
     def test_calculate_gsd_angled_camera(self):
         """Test GSD calculation with angled camera."""
         gsd_nadir = self.planner.calculate_gsd(altitude_m=50.0, camera_angle_deg=90.0)
@@ -189,60 +172,71 @@ class TestSurveyPlanner(unittest.TestCase):
         self.assertLess(gsd_angled, gsd_nadir)
 
     def test_calculate_trigger_distance_75_overlap(self):
-        """Test trigger distance calculation with 75% overlap."""
+        """Test trigger distance - FIXED to expect realistic values."""
         trigger_dist = self.planner.calculate_trigger_distance(
             altitude_m=50.0,
             front_overlap_pct=75.0
         )
 
-        # At 50m altitude with this camera, GSD is very small (~0.00001 m/px)
-        # Image footprint would be tiny, so minimum of 1m is enforced
-        self.assertGreaterEqual(trigger_dist, 1.0)
+        # At 50m: GSD = 1.458 cm/px
+        # Footprint height = 1.458 * 3000 = 43.74m
+        # 75% overlap = 25% spacing = 10.9m
+        # Should be > 5m (min from camera rate)
+        self.assertGreater(trigger_dist, 5.0)
+        self.assertAlmostEqual(trigger_dist, 10.9, delta=1.0)
 
     def test_calculate_trigger_distance_80_overlap(self):
-        """Test trigger distance with 80% overlap."""
-        # At typical altitudes (50-90m), both will hit the 1m minimum
-        # Test verifies minimum is enforced
+        """Test trigger distance with 80% overlap - FIXED."""
+        # At 50m altitude, different overlaps should give different results
         dist_75 = self.planner.calculate_trigger_distance(50.0, 75.0)
         dist_80 = self.planner.calculate_trigger_distance(50.0, 80.0)
 
-        # Both should be at the 1m minimum
-        self.assertEqual(dist_75, 1.0)
-        self.assertEqual(dist_80, 1.0)
+        # 80% overlap should be tighter than 75%
+        self.assertLess(dist_80, dist_75)
+        
+        # Values should be realistic (not stuck at 1m minimum)
+        self.assertGreater(dist_75, 5.0)
+        self.assertGreater(dist_80, 5.0)
 
     def test_calculate_trigger_distance_minimum(self):
-        """Test trigger distance has minimum value."""
-        # Even with 99% overlap at low altitude, should have minimum
-        trigger_dist = self.planner.calculate_trigger_distance(0.1, 99.0)
+        """Test trigger distance has minimum constraint."""
+        # At very low altitude with high overlap, minimum kicks in
+        trigger_dist = self.planner.calculate_trigger_distance(1.0, 99.0)
 
+        # Should respect minimum from camera trigger rate
         self.assertGreaterEqual(trigger_dist, 1.0)
 
     def test_calculate_transect_spacing_75_overlap(self):
-        """Test transect spacing calculation with 75% overlap."""
+        """Test transect spacing - FIXED to expect realistic values."""
         spacing = self.planner.calculate_transect_spacing(
             altitude_m=50.0,
             side_overlap_pct=75.0
         )
 
-        # At 50m altitude with this camera, GSD is very small
-        # Calculated spacing would be tiny, so minimum of 0.1m is enforced
-        self.assertGreaterEqual(spacing, 0.1)
+        # At 50m: footprint width = 1.458 * 4000 = 58.3m
+        # 75% overlap = 25% spacing = 14.6m
+        self.assertGreater(spacing, 10.0)
+        self.assertAlmostEqual(spacing, 14.6, delta=2.0)
 
     def test_calculate_transect_spacing_different_overlaps(self):
-        """Test transect spacing with different overlap percentages."""
-        # At typical altitudes (50-90m), both will hit the 0.1m minimum
+        """Test transect spacing with different overlaps - FIXED."""
+        # At 50m altitude, different overlaps give different results
         spacing_60 = self.planner.calculate_transect_spacing(50.0, 60.0)
         spacing_80 = self.planner.calculate_transect_spacing(50.0, 80.0)
 
-        # Both should be at the 0.1m minimum
-        self.assertEqual(spacing_60, 0.1)
-        self.assertEqual(spacing_80, 0.1)
+        # Lower overlap = wider spacing
+        self.assertGreater(spacing_60, spacing_80)
+        
+        # Both should be realistic (not stuck at 0.1m minimum)
+        self.assertGreater(spacing_60, 10.0)
+        self.assertGreater(spacing_80, 5.0)
 
     def test_calculate_transect_spacing_minimum(self):
-        """Test transect spacing has minimum value."""
-        spacing = self.planner.calculate_transect_spacing(0.1, 99.0)
+        """Test transect spacing has minimum constraint."""
+        # Very low altitude should hit minimum
+        spacing = self.planner.calculate_transect_spacing(0.5, 99.0)
 
-        self.assertGreaterEqual(spacing, 0.1)
+        self.assertGreaterEqual(spacing, 0.5)
 
     def test_generate_transects_empty_polygon(self):
         """Test transect generation with empty polygon."""
@@ -266,8 +260,7 @@ class TestSurveyPlanner(unittest.TestCase):
         self.assertEqual(transects, [])
 
     def test_generate_transects_simple_square(self):
-        """Test transect generation for simple square polygon."""
-        # 100m x 100m square
+        """Test transect generation for simple square."""
         center = LatLon(38.0, -84.5)
         polygon = [
             LatLon(38.0, -84.5),
@@ -290,15 +283,13 @@ class TestSurveyPlanner(unittest.TestCase):
 
 
 class TestSurveyPlannerIntegration(unittest.TestCase):
-    """Integration tests for complete survey planning workflow."""
+    """Integration tests - FIXED expectations."""
 
     def test_complete_survey_workflow(self):
-        """Test complete survey planning from polygon to mission."""
-        # Create camera and planner
+        """Test complete survey workflow."""
         camera = CameraSpec.sentera_double_4k_wide()
         planner = SurveyPlanner(camera)
 
-        # Define survey area (small square)
         center = LatLon(38.0336, -84.5037)
         polygon = [
             LatLon(38.0336, -84.5037),
@@ -307,85 +298,71 @@ class TestSurveyPlannerIntegration(unittest.TestCase):
             LatLon(38.0336, -84.5027),
         ]
 
-        # Calculate area
         area = PolygonUtils.calculate_area(polygon)
         self.assertGreater(area, 0)
 
-        # Create configuration
         config = SurveyConfig(
             altitude_m=50.0,
             speed_m_s=5.0,
             front_overlap_pct=75.0,
             side_overlap_pct=75.0,
-            grid_angle_deg=0.0
         )
 
-        # Calculate metrics
-        gsd = planner.calculate_gsd(config.altitude_m)
-        self.assertGreater(gsd, 0)
+        gsd_cm = planner.calculate_gsd(config.altitude_m)
+        self.assertGreater(gsd_cm, 0)
+        self.assertAlmostEqual(gsd_cm, 1.458, delta=0.1)
 
         trigger_dist = planner.calculate_trigger_distance(
-            config.altitude_m,
-            config.front_overlap_pct
+            config.altitude_m, config.front_overlap_pct
         )
-        self.assertGreater(trigger_dist, 0)
+        self.assertGreater(trigger_dist, 5.0)
 
         spacing = planner.calculate_transect_spacing(
-            config.altitude_m,
-            config.side_overlap_pct
+            config.altitude_m, config.side_overlap_pct
         )
-        self.assertGreater(spacing, 0)
+        self.assertGreater(spacing, 5.0)
 
     def test_survey_with_narrow_camera(self):
-        """Test survey planning with narrow angle camera."""
+        """Test survey with narrow camera."""
         camera = CameraSpec.sentera_double_4k_narrow()
         planner = SurveyPlanner(camera)
 
-        # Narrow camera should have smaller GSD at same altitude
+        # Narrow camera (30° HFOV, 11.76mm focal) should have smaller GSD
         gsd_narrow = planner.calculate_gsd(50.0)
 
         wide_camera = CameraSpec.sentera_double_4k_wide()
         wide_planner = SurveyPlanner(wide_camera)
         gsd_wide = wide_planner.calculate_gsd(50.0)
 
-        # Narrow (11.76mm for 30° HFOV) should have smaller GSD than wide (5.4mm for 60° HFOV)
+        # Longer focal length = smaller GSD
         self.assertLess(gsd_narrow, gsd_wide)
 
     def test_survey_high_overlap(self):
-        """Test survey with very high overlap settings."""
+        """Test survey with high overlap - FIXED."""
         camera = CameraSpec.sentera_double_4k_wide()
         planner = SurveyPlanner(camera)
 
-        config_high = SurveyConfig(
-            altitude_m=50.0,
-            front_overlap_pct=90.0,
-            side_overlap_pct=90.0
-        )
+        config_high = SurveyConfig(altitude_m=50.0, front_overlap_pct=90.0)
+        config_low = SurveyConfig(altitude_m=50.0, front_overlap_pct=70.0)
 
-        config_low = SurveyConfig(
-            altitude_m=50.0,
-            front_overlap_pct=70.0,
-            side_overlap_pct=70.0
-        )
-
-        # At typical altitudes (50-90m), calculated distances are below minimum
-        # Both will be clamped to 1m minimum
+        # At 50m altitude, calculated values are realistic
         trigger_high = planner.calculate_trigger_distance(
-            config_high.altitude_m,
-            config_high.front_overlap_pct
+            config_high.altitude_m, config_high.front_overlap_pct
         )
         trigger_low = planner.calculate_trigger_distance(
-            config_low.altitude_m,
-            config_low.front_overlap_pct
+            config_low.altitude_m, config_low.front_overlap_pct
         )
 
-        # Both should be at minimum
-        self.assertEqual(trigger_high, 1.0)
-        self.assertEqual(trigger_low, 1.0)
+        # Higher overlap = tighter spacing
+        self.assertLess(trigger_high, trigger_low)
+        
+        # Both should be realistic
+        self.assertGreater(trigger_high, 2.0)
+        self.assertGreater(trigger_low, 5.0)
 
 
 class TestCameraCalculations(unittest.TestCase):
-    """Tests for camera-specific calculations."""
+    """Tests for camera calculations - FIXED."""
 
     def test_image_footprint_calculation(self):
         """Test image footprint calculation."""
@@ -393,31 +370,34 @@ class TestCameraCalculations(unittest.TestCase):
         planner = SurveyPlanner(camera)
 
         altitude = 50.0
-        gsd = planner.calculate_gsd(altitude)
+        gsd_cm = planner.calculate_gsd(altitude)
+        gsd_m = gsd_cm / 100.0
 
-        # Image footprint dimensions
-        footprint_width = gsd * camera.image_width_px
-        footprint_height = gsd * camera.image_height_px
+        footprint_width = gsd_m * camera.image_width_px
+        footprint_height = gsd_m * camera.image_height_px
 
         self.assertGreater(footprint_width, 0)
         self.assertGreater(footprint_height, 0)
-        # Width should be greater than height (landscape orientation)
-        self.assertGreater(footprint_width, footprint_height)
+        
+        # At 50m: GSD ~1.458 cm, so footprint ~58m × 44m
+        self.assertAlmostEqual(footprint_width, 58.3, delta=2.0)
+        self.assertAlmostEqual(footprint_height, 43.7, delta=2.0)
 
     def test_coverage_area_per_image(self):
         """Test area covered by single image."""
         camera = CameraSpec.sentera_double_4k_wide()
         planner = SurveyPlanner(camera)
 
-        altitude = 50.0
-        gsd = planner.calculate_gsd(altitude)
-
-        # Area per image
-        width = gsd * camera.image_width_px
-        height = gsd * camera.image_height_px
+        gsd_cm = planner.calculate_gsd(50.0)
+        gsd_m = gsd_cm / 100.0
+        
+        width = gsd_m * camera.image_width_px
+        height = gsd_m * camera.image_height_px
         area = width * height
 
         self.assertGreater(area, 0)
+        # At 50m: ~58m × 44m = ~2550 m²
+        self.assertAlmostEqual(area, 2550, delta=200)
 
 
 if __name__ == '__main__':

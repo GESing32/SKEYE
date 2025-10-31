@@ -44,7 +44,7 @@ class _GcsHomeState extends State<GcsHome> {
   StreamSubscription? sub;
 
   // Change to your RPi or host IP/name
-  String wsUrl = "ws://192.168.1.18:8765";
+  String wsUrl = "ws://localhost:8765";
 
   List<LatLng> mission = [];
   bool missionMode = false;

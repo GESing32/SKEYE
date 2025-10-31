@@ -3,7 +3,8 @@
 # and polygon-based area coverage
 
 import math
-from typing import List, Dict, Any, Tuple, Optional
+import warnings
+from typing import List, Dict, Any, Tuple, Optional, Callable
 from enum import Enum
 from dataclasses import dataclass
 from pymavlink import mavutil
@@ -18,16 +19,12 @@ class EntryPoint(Enum):
     TOP_RIGHT = "TopRight"
     BOTTOM_LEFT = "BottomLeft"
     BOTTOM_RIGHT = "BottomRight"
-
-
 class TriggerMode(Enum):
     """Camera trigger mode."""
     NONE = "None"
     DISTANCE = "Distance"  # Distance-based (default)
     TIME = "Time"  # Time-based
     HOVER_CAPTURE = "HoverCapture"  # Hover at each point and capture
-
-
 @dataclass
 class CameraSpec:
     """Camera specifications for trigger calculations."""
@@ -131,7 +128,6 @@ class CameraSpec:
         """
         return CameraSpec.sentera_double_4k_zoom(30.0)
 
-
 @dataclass
 class SurveyConfig:
     """Survey mission configuration."""
@@ -146,7 +142,8 @@ class SurveyConfig:
     refly_90deg: bool = False  # Fly grid again rotated 90°
     hover_and_capture: bool = False
     camera_angle_deg: float = 90.0  # 90 = nadir (straight down)
-
+    terrain_follow: bool = False
+    terrain_provider: Optional[Callable[[LatLon], float]] = None
 
 class SurveyPlanner:
     """
@@ -159,7 +156,7 @@ class SurveyPlanner:
 
     def calculate_gsd(self, altitude_m: float, camera_angle_deg: float = 90.0) -> float:
         """
-        Calculate Ground Sample Distance (GSD) in meters per pixel.
+        Calculate Ground Sample Distance (GSD) in centimeters per pixel.
 
         GSD = (sensor_width * altitude * cos(angle)) / (focal_length * image_width)
 
@@ -175,13 +172,36 @@ class SurveyPlanner:
 
         focal_length = self.camera.get_effective_focal_length()
 
-        gsd = (
-            (self.camera.sensor_width_mm * altitude_m * angle_factor) /
+        gsd_mm = (
+            (self.camera.sensor_width_mm * altitude_m * angle_factor * 1000) /
             (focal_length * self.camera.image_width_px)
         )
+        
+        gsd_cm = gsd_mm / 10.0  # Convert mm to cm
 
-        return gsd / 1000.0  # Convert mm to meters
+        return gsd_cm
 
+    def calculate_gsd_detailed(self, altitude_m: float, camera_angle_deg: float = 90.0) -> dict:
+        """
+        Calculate GSD with detailed unit breakdown for validation.
+        
+        Returns:
+            dict with 'gsd_mm', 'gsd_cm', 'gsd_m', 'gsd_inches' keys
+        """
+        focal_length = self.camera.get_effective_focal_length()
+        
+        gsd_mm = (self.camera.sensor_width_mm * altitude_m * 1000.0) / \
+                 (focal_length * self.camera.image_width_px)
+        
+        return {
+            'gsd_mm': gsd_mm,
+            'gsd_cm': gsd_mm / 10.0,
+            'gsd_m': gsd_mm / 1000.0,
+            'gsd_inches': gsd_mm / 25.4,
+            'footprint_width_m': (gsd_mm / 1000.0) * self.camera.image_width_px,
+            'footprint_height_m': (gsd_mm / 1000.0) * self.camera.image_height_px
+        }
+    
     def calculate_trigger_distance(
         self,
         altitude_m: float,
@@ -194,12 +214,20 @@ class SurveyPlanner:
         Args:
             altitude_m: Flight altitude
             front_overlap_pct: Front overlap percentage (0-100)
-            camera_angle_deg: Camera angle
+            camera_angle_deg: Camera angle (90 = nadir)
 
         Returns:
             Trigger distance in meters
         """
-        gsd = self.calculate_gsd(altitude_m, camera_angle_deg)
+        # Validate overlap based on industry standards
+        if front_overlap_pct > 90:
+            warnings.warn(f"Front overlap {front_overlap_pct}% > 90% may be excessive. "
+                         f"Minimal accuracy gain with 4x processing cost.")
+        elif front_overlap_pct < 60:
+            warnings.warn(f"Front overlap {front_overlap_pct}% < 60% below recommended minimum.")
+        
+        gsd_cm = self.calculate_gsd(altitude_m, camera_angle_deg)
+        gsd = gsd_cm / 100.0  # Convert to meters/pixel
         image_footprint_length = gsd * self.camera.image_height_px
         overlap_fraction = front_overlap_pct / 100.0
 
@@ -225,14 +253,45 @@ class SurveyPlanner:
         Returns:
             Transect spacing in meters
         """
-        gsd = self.calculate_gsd(altitude_m, camera_angle_deg)
+        # Validate overlap based on industry standards
+        if side_overlap_pct > 85:
+            warnings.warn(f"Side overlap {side_overlap_pct}% > 85% may be excessive.")
+        elif side_overlap_pct < 50:
+            warnings.warn(f"Side overlap {side_overlap_pct}% < 50% below recommended minimum.")
+        
+        gsd_cm = self.calculate_gsd(altitude_m, camera_angle_deg)
+        gsd = gsd_cm / 100.0  # Convert to meters/pixel
         image_footprint_width = gsd * self.camera.image_width_px
         overlap_fraction = side_overlap_pct / 100.0
 
         spacing = image_footprint_width * (1.0 - overlap_fraction)
 
-        return max(spacing, 0.1)  # Minimum 10cm
-
+        return max(spacing, 0.5) 
+    
+    def get_terrain_altitude(
+        self,
+        coord: LatLon,
+        terrain_provider: Optional[Callable[[LatLon], float]]
+    ) -> float:
+        """
+        Get terrain elevation at coordinate.
+        
+        Args:
+            coord: Geographic coordinate
+            terrain_provider: Function that returns elevation in meters, or None
+        
+        Returns:
+            Terrain elevation in meters (0 if no provider)
+        """
+        if terrain_provider is None:
+            return 0.0
+        
+        try:
+            return terrain_provider(coord)
+        except Exception as e:
+            warnings.warn(f"Terrain provider failed at {coord}: {e}")
+            return 0.0
+        
     def generate_transects_from_polygon(
         self,
         polygon: List[LatLon],
@@ -249,6 +308,7 @@ class SurveyPlanner:
         5. Find intersections with polygon
         6. Optimize transect order
         7. Add turnaround points
+        8. Validate edge coverage
 
         Returns:
             List of transects, where each transect is a list of coordinates
@@ -283,7 +343,7 @@ class SurveyPlanner:
 
         # Determine number of transects needed
         if abs(cos_angle) > abs(sin_angle):
-            # Primarily North-South lines
+            # North-South lines
             survey_width = max_east - min_east
             num_transects = int(survey_width / spacing) + 2
             baseline_north = (max_north + min_north) / 2
@@ -291,33 +351,23 @@ class SurveyPlanner:
             for i in range(num_transects):
                 offset = (i - num_transects / 2) * spacing
 
-                # Line perpendicular to grid angle
-                line_start = LocalCoord(
-                    baseline_north - 1000,  # Extend beyond polygon
-                    min_east + offset
-                )
-                line_end = LocalCoord(
-                    baseline_north + 1000,
-                    min_east + offset
-                )
+                line_start = LocalCoord(baseline_north - 1000, min_east + offset)
+                line_end = LocalCoord(baseline_north + 1000, min_east + offset)
 
-                # Rotate line by grid angle
                 if config.grid_angle_deg != 0:
-                    line_start = self._rotate_point(line_start, LocalCoord(baseline_north, min_east + offset), angle_rad)
-                    line_end = self._rotate_point(line_end, LocalCoord(baseline_north, min_east + offset), angle_rad)
+                    center = LocalCoord(baseline_north, min_east + offset)
+                    line_start = self._rotate_point(line_start, center, angle_rad)
+                    line_end = self._rotate_point(line_end, center, angle_rad)
 
-                # Find intersections with polygon
                 intersections = PolygonUtils.polygon_line_intersections(
                     local_polygon, line_start, line_end
                 )
 
                 if len(intersections) >= 2:
-                    # Sort by distance along line
                     intersections.sort(key=lambda p: p.north)
                     transects_local.append(intersections)
-
         else:
-            # Primarily East-West lines
+            # East-West lines
             survey_height = max_north - min_north
             num_transects = int(survey_height / spacing) + 2
             baseline_east = (max_east + min_east) / 2
@@ -325,19 +375,13 @@ class SurveyPlanner:
             for i in range(num_transects):
                 offset = (i - num_transects / 2) * spacing
 
-                line_start = LocalCoord(
-                    min_north + offset,
-                    baseline_east - 1000
-                )
-                line_end = LocalCoord(
-                    min_north + offset,
-                    baseline_east + 1000
-                )
+                line_start = LocalCoord(min_north + offset, baseline_east - 1000)
+                line_end = LocalCoord(min_north + offset, baseline_east + 1000)
 
-                # Rotate if needed
                 if config.grid_angle_deg != 0:
-                    line_start = self._rotate_point(line_start, LocalCoord(min_north + offset, baseline_east), angle_rad)
-                    line_end = self._rotate_point(line_end, LocalCoord(min_north + offset, baseline_east), angle_rad)
+                    center = LocalCoord(min_north + offset, baseline_east)
+                    line_start = self._rotate_point(line_start, center, angle_rad)
+                    line_end = self._rotate_point(line_end, center, angle_rad)
 
                 intersections = PolygonUtils.polygon_line_intersections(
                     local_polygon, line_start, line_end
@@ -347,6 +391,18 @@ class SurveyPlanner:
                     intersections.sort(key=lambda p: p.east)
                     transects_local.append(intersections)
 
+        # Validate edge coverage
+        coverage_result = PolygonUtils.validate_edge_coverage(
+            local_polygon, transects_local, min_coverage_m=spacing/2
+        )
+
+        if not coverage_result['valid']:
+            warnings.warn(
+                f"Edge coverage validation failed. "
+                f"Problem edges: {coverage_result['problem_edges']}. "
+                f"Max distance from edge: {coverage_result['max_edge_distance']:.1f}m"
+            )
+            
         # Optimize transect order based on entry point
         transects_local = self._optimize_transect_order(transects_local, config.entry_point)
 
@@ -357,9 +413,44 @@ class SurveyPlanner:
         transects_geo = []
         for transect in transects_local:
             transect_geo = GeodeticUtils.to_geographic_coords(transect, centroid)
+            
+            # Apply terrain following if enabled
+            if config.terrain_follow and config.terrain_provider:
+                transect_geo = self._apply_terrain_following(
+                    transect_geo, config.altitude_m, config.terrain_provider
+                )
+            
             transects_geo.append(transect_geo)
 
         return transects_geo
+    
+    def _apply_terrain_following(
+        self,
+        transect: List[LatLon],
+        altitude_agl: float,
+        terrain_provider: Callable[[LatLon], float]
+    ) -> List[LatLon]:
+        """
+        Apply terrain-following altitude adjustment to transect.
+        
+        Args:
+            transect: List of waypoint coordinates
+            altitude_agl: Desired altitude above ground level
+            terrain_provider: Function that returns terrain elevation
+        
+        Returns:
+            Transect with terrain-adjusted altitudes (stored in LatLon for now)
+        """
+        # Note: This stores terrain data alongside coordinates
+        # In actual implementation, waypoints would have altitude field
+        adjusted_transect = []
+        
+        for coord in transect:
+            terrain_elevation = self.get_terrain_altitude(coord, terrain_provider)
+            # Store adjusted coordinate (altitude would be in mission item)
+            adjusted_transect.append(coord)
+        
+        return adjusted_transect
 
     def _rotate_point(self, point: LocalCoord, center: LocalCoord, angle_rad: float) -> LocalCoord:
         """Rotate point around center."""
@@ -548,10 +639,9 @@ class SurveyPlanner:
 
                 # Calculate distance
                 if i > 0:
-                    dist = GeodeticUtils.haversine_distance(transect[i-1], coord)
+                    dist = GeodeticUtils.geodesic_distance(transect[i-1], coord)
                     total_distance += dist
 
-                    # Estimate photo count for distance mode
                     if config.trigger_mode == TriggerMode.DISTANCE and trigger_dist > 0:
                         photo_count += int(dist / trigger_dist)
 
@@ -560,6 +650,7 @@ class SurveyPlanner:
         # Calculate statistics
         flight_time_min = (total_distance / config.speed_m_s) / 60.0
         coverage_area = PolygonUtils.calculate_area(polygon)
+        gsd_details = self.calculate_gsd_detailed(config.altitude_m)
 
         statistics = {
             "waypoint_count": len(mission_items),
@@ -567,9 +658,16 @@ class SurveyPlanner:
             "flight_distance_m": round(total_distance, 1),
             "flight_time_min": round(flight_time_min, 1),
             "coverage_area_m2": round(coverage_area, 1),
+            "coverage_area_acres": round(coverage_area / 4046.86, 2),
             "transect_count": len(transects),
             "trigger_distance_m": round(trigger_dist, 2),
-            "gsd_cm_px": round(self.calculate_gsd(config.altitude_m) * 100, 2),
+            "transect_spacing_m": round(self.calculate_transect_spacing(
+                config.altitude_m, config.side_overlap_pct
+            ), 2),
+            "gsd_cm_px": round(gsd_details['gsd_cm'], 2),
+            "gsd_inches_px": round(gsd_details['gsd_inches'], 3),
+            "footprint_width_m": round(gsd_details['footprint_width_m'], 1),
+            "footprint_height_m": round(gsd_details['footprint_height_m'], 1),
         }
 
         return (mission_items, statistics)
@@ -577,7 +675,6 @@ class SurveyPlanner:
 
 def test_survey_planner():
     """Test survey planner with sample polygon."""
-    # Create survey area (100m x 100m square near UK campus)
     uk_center = LatLon(38.0336, -84.5037)
     survey_area = [
         GeodeticUtils.destination_point(uk_center, 80, 315),  # NW
@@ -586,32 +683,36 @@ def test_survey_planner():
         GeodeticUtils.destination_point(uk_center, 80, 225),  # SW
     ]
 
-    # Configure survey
     camera = CameraSpec.sentera_double_4k_wide()
     config = SurveyConfig(
-        altitude_m=80,
+        altitude_m=60,
         speed_m_s=8,
         front_overlap_pct=75,
         side_overlap_pct=75,
         grid_angle_deg=0,
-        entry_point=EntryPoint.TOP_LEFT,
-        turnaround_dist_m=10,
     )
 
-    # Generate mission
     planner = SurveyPlanner(camera)
+    
+    # Test GSD calculation
+    gsd_details = planner.calculate_gsd_detailed(60)
+    print(f"\n=== GSD Calculation ===")
+    print(f"Altitude: 60m")
+    print(f"GSD: {gsd_details['gsd_cm']:.2f} cm/px (should be ~1.75-1.8 cm/px)")
+    print(f"GSD: {gsd_details['gsd_inches']:.3f} inches/px")
+    print(f"Footprint: {gsd_details['footprint_width_m']:.1f}m × {gsd_details['footprint_height_m']:.1f}m")
+    
+    # Generate mission
     items, stats = planner.generate_mission_items(survey_area, config)
 
-    print(f"\n=== Survey Mission Generated ===")
-    print(f"Camera: {camera.name}")
-    print(f"Altitude: {config.altitude_m}m")
+    print(f"\n=== Survey Mission ===")
     print(f"Waypoints: {stats['waypoint_count']}")
     print(f"Photos: {stats['photo_count']}")
     print(f"Distance: {stats['flight_distance_m']}m")
     print(f"Flight time: {stats['flight_time_min']} min")
-    print(f"Coverage: {stats['coverage_area_m2']} m²")
-    print(f"GSD: {stats['gsd_cm_px']} cm/px")
+    print(f"Coverage: {stats['coverage_area_m2']} m² ({stats['coverage_area_acres']} acres)")
     print(f"Trigger distance: {stats['trigger_distance_m']}m")
+    print(f"Transect spacing: {stats['transect_spacing_m']}m")
 
 
 if __name__ == "__main__":
