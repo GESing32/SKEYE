@@ -299,8 +299,8 @@ class PolygonUtils:
             for point in polygon:
                 poly.AddPoint(point.lat, point.lon)
             
-            # Compute returns (perimeter, area, number_of_points)
-            _, area, _ = poly.Compute(False, True)
+            # Compute returns (number_of_points, perimeter, area)
+            _, _, area = poly.Compute(False, True)
             return abs(area)
         else:
             # Fallback: Shoelace in local coordinates (less accurate)

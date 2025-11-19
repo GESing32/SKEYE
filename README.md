@@ -1,157 +1,212 @@
 # SKEYE Flight System
 
-Professional drone ground control station (GCS) with QGC-style survey planning for the Sentera Double 4K camera.
+Professional drone ground control station with advanced survey planning capabilities for agricultural application.
 
-**University of Kentucky ECE Department Senior Design Project**
+**University of Kentucky ECE Department**
+
+---
 
 ## Features
 
 - **Survey Planning** - QGC-style polygon-based survey generation with automatic grid patterns
-- **Real-Time Control** - WebSocket-based telemetry streaming and command/control
-- **Camera Integration** - Sentera Double 4K camera control via MAVLink
-- **SITL Testing** - Software-in-the-loop simulation support for safe testing
-- **Platform** - Windows via Flutter
+- **Real-Time Control** - WebSocket-based telemetry and command/control
+- **Camera Integration** - Sentera Double 4K camera with MAVLink triggering
+- **SITL Testing** - Software-in-the-loop simulation for safe testing
+- **Geodesic Accuracy** - Survey-grade coordinate calculations using Karney's algorithms
+
+---
 
 ## Quick Start
 
-### SITL Testing (Recommended First Step)
+### SITL Testing (Recommended)
 
-Test without real hardware using Mission Planner simulator:
+Test safely without hardware:
 
 ```bash
-# 1. Start Mission Planner SITL (GUI: Simulation → Multirotor → Start Simulation)
+# 1. Start Mission Planner SITL
+#    Mission Planner → Simulation → Multirotor → Start Simulation
 
-# 2. Start SKEYE GCS
+# 2. Start SKEYE Backend
 start_gcs_sitl.bat
 
-# 3. Start Flutter UI (in another terminal)
-cd src/flight-system/v2
+# 3. Start Flutter UI (new terminal)
+cd src\flight-system\v2
 flutter run -d windows
 ```
-
-**See [SITL Quick Start Guide](docs/SITL_QUICKSTART.md) for detailed instructions.**
 
 ### Real Hardware
 
 ```bash
-# 1. Connect Pixhawk 6X via USB or telemetry radio
+# 1. Connect Pixhawk 6x via USB
 
-# 2. Start SKEYE GCS (auto-detects hardware)
+# 2. Start SKEYE Backend (auto-detects COM port)
 start_gcs_hardware.bat
 
-# 3. Start Flutter UI (in another terminal)
-cd src/flight-system/v2
+# 3. Start Flutter UI (new terminal)
+cd src\flight-system\v2
 flutter run -d windows
 ```
 
+---
+
 ## Documentation
 
-**Complete documentation available in [`docs/`](docs/) folder:**
+Complete guides in the [`docs/`](docs/) folder:
 
-- **[Documentation Index](docs/README.md)** - All documentation organized by topic
-- **[SITL Quick Start](docs/SITL_QUICKSTART.md)** - 5-minute SITL testing setup
-- **[Complete User Guide](docs/DOCUMENTATION.md)** - Hardware setup, survey planning, troubleshooting
-- **[Architecture Overview](docs/ARCHITECTURE.md)** - System design and technical details
-- **[SITL Testing Guide](docs/SITL_TESTING_GUIDE.md)** - Comprehensive SITL testing on Windows
-- **[Testing Guide](docs/TESTING_GUIDE.md)** - Running unit and integration tests
-- **[Test Results](docs/TEST_RESULTS.md)** - Current test coverage (59%, 379 tests)
+- **[README](docs/README.md)** - Documentation overview and quick start
+- **[System Guide](docs/SYSTEM_GUIDE.md)** - Architecture, data flow, and design
+- **[User Guide](docs/USER_GUIDE.md)** - Operations, flight modes, and survey planning
+- **[Developer Guide](docs/DEVELOPER_GUIDE.md)** - Development, testing, and extending
+
+---
 
 ## Project Structure
 
 ```
 SKEYE/
-├── docs/                          # All documentation
-│   ├── README.md                  # Documentation index
-│   ├── SITL_QUICKSTART.md         # Quick SITL setup
-│   ├── DOCUMENTATION.md           # Complete user guide
-│   └── ...                        # Architecture, testing guides
+├── docs/                          # Documentation (4 focused guides)
+│   ├── README.md                  # Documentation overview
+│   ├── SYSTEM_GUIDE.md            # Architecture & design
+│   ├── USER_GUIDE.md              # Operations guide
+│   └── DEVELOPER_GUIDE.md         # Development guide
 │
-├── src/flight-system/v2/          # Core GCS system
-│   ├── gcs_core.py                # MAVLink communication
-│   ├── geometry_utils.py          # Geodetic calculations
-│   ├── survey_planner.py          # Survey mission generator
-│   ├── run_gcs.py                 # WebSocket server
-│   ├── run_gcs_sitl.py            # SITL launcher
-│   └── lib/                       # Flutter frontend
+├── src/flight-system/v2/          # Core system
+│   ├── gcs_core.py                # MAVLink communication (400 lines)
+│   ├── geometry_utils.py          # Geodetic calculations (525 lines)
+│   ├── survey_planner.py          # Survey generator (830 lines)
+│   ├── run_gcs.py                 # WebSocket server (220 lines)
+│   └── lib/                       # Flutter frontend (~1,300 lines)
 │
 ├── test/                          # Test suite
-│   ├── unit/                      # Unit tests (Python + Dart)
+│   ├── unit/                      # Python unit tests (300+ tests)
 │   ├── integration/               # Integration tests
-│   └── widget_test.dart           # Widget tests
+│   └── widget_test.dart           # Flutter tests
 │
-├── start_gcs_sitl.bat             # SITL launcher (Windows)
-└── start_gcs_hardware.bat         # Hardware launcher (Windows)
+├── start_gcs_sitl.bat             # SITL launcher
+└── start_gcs_hardware.bat         # Hardware launcher
 ```
+
+**Total:** ~3,275 lines of code (lean and focused)
+
+---
 
 ## System Requirements
 
 ### Hardware
-- Pixhawk 6X flight controller
-- Sentera Double 4K camera (Model 27060)
-- SiK Telemetry Radio (915MHz) or USB connection
-- Windows/macOS/Linux computer
+- Pixhawk 6x flight controller
+- Sentera Double 4K camera (MAVLink trigger)
+- USB cable or telemetry radio
+- Computer 
 
 ### Software
-- Python 3.9 or later
-- Flutter 3.33 or later
-- QGroundControle latest version
-- Mission Planner (for SITL testing)
+- Python 3.9+
+- Flutter 3.0+
+- QGroundControl (latest version)
+- Mission Planner (SITL testing)
 
-### Python Dependencies
+### Dependencies
+
+**Python:**
 ```bash
-pip install pymavlink websockets
+pip install pymavlink websockets geographiclib
 ```
 
-### Flutter Dependencies
+**Flutter:**
 ```bash
+cd src/flight-system/v2
 flutter pub get
 ```
+
+---
 
 ## Development
 
 ### Running Tests
 
-**Python tests:**
+**Python (pytest):**
 ```bash
-# Using pytest (recommended)
-pytest test/unit/
+# Activate virtual environment
+.venv\Scripts\activate
 
-# Using unittest
-python -m unittest discover -s test/unit -p "test_*.py"
+# Run all tests
+pytest test/unit/ -v
+
+# With coverage
+pytest test/unit/ --cov=src/flight-system/v2 --cov-report=html
 ```
 
-**Flutter tests:**
+**Flutter:**
 ```bash
 flutter test
+flutter test --coverage
 ```
 
-**See [Testing Guide](docs/TESTING_GUIDE.md) for detailed test instructions.**
+See [Developer Guide](docs/DEVELOPER_GUIDE.md) for complete testing instructions.
 
-### Project Status
+### Test Coverage
 
-- **Version**: 2.0.0
-- **Status**: Production Ready ✅
-- **Test Coverage**: 59% (379 tests total)
-- **Last Updated**: October 20, 2025
-
-## Key Technologies
-
-- **Backend**: Python 3.9+ with pymavlink
-- **Frontend**: Flutter/Dart
-- **Communication**: WebSocket (backend ↔ frontend), MAVLink (drone ↔ backend)
-- **Flight Controller**: ArduPilot firmware on Pixhawk 6X
-- **Camera**: Sentera Double 4K via MAVLink
-
-## Support
-
-- **Documentation**: See [`docs/`](docs/) folder
-- **Issues**: Check troubleshooting sections in documentation
-- **SITL Testing**: See [SITL guides](docs/SITL_QUICKSTART.md) for safe testing
-
-## License
-
-SKEYE - University of Kentucky ECE Department Senior Design Project
+- **Python:** 65% coverage (300+ tests)
+- **Integration:** SITL automated testing
+- **Widget:** Flutter UI tests
 
 ---
 
-**Ready to get started?** Begin with [SITL Quick Start](docs/SITL_QUICKSTART.md) for safe testing, then move to [Complete Documentation](docs/DOCUMENTATION.md) for real hardware setup.
+## Key Technologies
+
+**Backend:**
+- Python 3.9+ with pymavlink
+- WebSocket server (async I/O)
+- Geographiclib (geodesic calculations)
+
+**Frontend:**
+- Flutter/Dart
+- flutter_map (OpenStreetMap)
+- WebSocket client
+
+**Communication:**
+- WebSocket: Backend ↔ Frontend
+- MAVLink: Backend ↔ Pixhawk
+- Serial/TCP/UDP: Connection transport
+
+**Flight Controller:**
+- ArduPilot firmware
+- Pixhawk 6x hardware
+
+---
+
+## System Status
+
+- **Version:** 2.0
+- **Status:** Production Ready ✅
+- **Backend:** ~1,975 lines (Python)
+- **Frontend:** ~1,300 lines (Flutter)
+- **Test Coverage:** 65% (300+ tests)
+- **Last Updated:** November 19, 2025
+
+---
+
+## Support
+
+**Documentation:**
+- [README](docs/README.md) - Getting started
+- [System Guide](docs/SYSTEM_GUIDE.md) - Architecture
+- [User Guide](docs/USER_GUIDE.md) - How to operate
+- [Developer Guide](docs/DEVELOPER_GUIDE.md) - How to develop
+
+**External Resources:**
+- [ArduPilot Documentation](https://ardupilot.org/)
+- [MAVLink Protocol](https://mavlink.io/)
+- [Flutter Documentation](https://docs.flutter.dev/)
+
+---
+
+## License
+
+University of Kentucky ECE Department
+
+---
+
+**Ready to start?**
+1. Try [SITL testing](docs/README.md#5-minute-sitl-test) first (safe simulation)
+2. Read [User Guide](docs/USER_GUIDE.md) for operations
+3. See [Developer Guide](docs/DEVELOPER_GUIDE.md) for development

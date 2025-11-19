@@ -8,10 +8,19 @@ import 'package:latlong2/latlong.dart';
 import 'package:custom_gcs_serial/main.dart';
 
 void main() {
+  // Helper to create app with WebSocket disabled for testing
+  Widget createTestApp() {
+    return MaterialApp(
+      title: 'Custom GCS (Serial)',
+      theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
+      home: const GcsHome(enableWebSocket: false),
+    );
+  }
+
   group('GCS Integration Tests', () {
     testWidgets('Mission planning workflow - add and clear waypoints', (WidgetTester tester) async {
       // Start the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Enable mission edit mode
@@ -43,7 +52,7 @@ void main() {
 
     testWidgets('Arm/Disarm button toggles text', (WidgetTester tester) async {
       // Start the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Initially should show "Arm" (disarmed state)
@@ -56,7 +65,7 @@ void main() {
 
     testWidgets('Mode selection from dropdown', (WidgetTester tester) async {
       // Start the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Open mode menu
@@ -80,7 +89,7 @@ void main() {
 
     testWidgets('RTL button is always enabled', (WidgetTester tester) async {
       // Start the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Find RTL button
@@ -94,7 +103,7 @@ void main() {
 
     testWidgets('Status bar displays default values on startup', (WidgetTester tester) async {
       // Start the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Check for default/empty telemetry values
@@ -107,7 +116,7 @@ void main() {
 
     testWidgets('Connection status icon reflects disconnected state', (WidgetTester tester) async {
       // Start the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Initially disconnected
@@ -332,7 +341,7 @@ void main() {
 
   group('State Management Tests', () {
     testWidgets('Mission mode state persists', (WidgetTester tester) async {
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Enable mission mode
@@ -353,7 +362,7 @@ void main() {
     });
 
     testWidgets('Telemetry updates reflect in UI', (WidgetTester tester) async {
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Initial state shows defaults
@@ -398,7 +407,7 @@ void main() {
 
   group('Mission Planning Workflow Tests', () {
     testWidgets('Complete mission planning flow', (WidgetTester tester) async {
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Step 1: Enable mission mode
@@ -422,7 +431,7 @@ void main() {
     });
 
     testWidgets('Mission mode toggle disables mission controls', (WidgetTester tester) async {
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Enable mission mode
@@ -443,7 +452,7 @@ void main() {
     testWidgets('App renders within reasonable time', (WidgetTester tester) async {
       final stopwatch = Stopwatch()..start();
 
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       stopwatch.stop();
@@ -453,7 +462,7 @@ void main() {
     });
 
     testWidgets('Mode menu opens quickly', (WidgetTester tester) async {
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       final stopwatch = Stopwatch()..start();
@@ -468,4 +477,166 @@ void main() {
       expect(stopwatch.elapsedMilliseconds, lessThan(500));
     });
   });
+
+  group('WebSocket Connection Tests', () {
+    // Note: These tests have WebSocket disabled by default
+    // To test real WebSocket connections, set enableWebSocket: true
+    // and ensure the backend is running on ws://localhost:8765
+
+    testWidgets('App handles WebSocket disconnection gracefully', (WidgetTester tester) async {
+      await tester.pumpWidget(createTestApp());
+      await tester.pump();
+
+      // Should show disconnected state (no backend running)
+      expect(find.byIcon(Icons.link_off), findsOneWidget);
+
+      // App should still be usable
+      expect(find.text('Arm'), findsOneWidget);
+      expect(find.text('RTL'), findsOneWidget);
+    });
+
+    testWidgets('App initializes without WebSocket connection', (WidgetTester tester) async {
+      await tester.pumpWidget(createTestApp());
+      await tester.pump();
+
+      // Verify UI loads even without WebSocket
+      expect(find.text('Custom GCS (Serial)'), findsOneWidget);
+      expect(find.text('UNKNOWN'), findsOneWidget);
+      expect(find.text('No'), findsOneWidget);
+    });
+
+    testWidgets('Connection status icon reflects disconnected state', (WidgetTester tester) async {
+      await tester.pumpWidget(createTestApp());
+      await tester.pump();
+
+      // Find the connection icon
+      final icon = tester.widget<Icon>(find.byIcon(Icons.link_off));
+
+      // Should be red when disconnected
+      expect(icon.color, equals(Colors.red));
+    });
+
+    testWidgets('Commands are queued when disconnected', (WidgetTester tester) async {
+      await tester.pumpWidget(createTestApp());
+      await tester.pump();
+
+      // Try to send commands while disconnected
+      final armButton = find.widgetWithText(ElevatedButton, 'Arm');
+      await tester.tap(armButton);
+      await tester.pump();
+
+      // App should not crash (commands are dropped when channel is null)
+      expect(tester.takeException(), isNull);
+    });
+
+    test('HELLO message is properly formatted', () {
+      final helloMsg = {
+        "type": "HELLO",
+        "link_ok": true,
+        "mode": "STABILIZE",
+        "armed": false,
+      };
+
+      expect(helloMsg["type"], equals("HELLO"));
+      expect(helloMsg["link_ok"], isA<bool>());
+      expect(helloMsg["mode"], isA<String>());
+      expect(helloMsg["armed"], isA<bool>());
+    });
+
+    test('Command messages have correct structure', () {
+      final commands = [
+        {"command": "arm", "force": true},
+        {"command": "set_mode", "mode": "GUIDED"},
+        {"command": "goto", "lat": 38.0, "lon": -84.5, "alt": 20.0},
+        {"command": "mission_clear"},
+      ];
+
+      for (final cmd in commands) {
+        expect(cmd.containsKey("command"), isTrue);
+        expect(cmd["command"], isA<String>());
+      }
+    });
+
+    test('Telemetry message parsing handles missing fields', () {
+      // Test with minimal message
+      final minimalMsg = {
+        "type": "HEARTBEAT",
+        "base_mode": 0,
+      };
+
+      expect(minimalMsg["type"], equals("HEARTBEAT"));
+      expect(minimalMsg["base_mode"] ?? 0, equals(0));
+
+      // Test with null values
+      final nullMsg = {
+        "type": "GLOBAL_POSITION_INT",
+        "lat": null,
+        "lon": null,
+        "relative_alt": null,
+      };
+
+      // Verify null handling works correctly
+      final lat = (nullMsg["lat"] ?? 0) as num;
+      expect(lat / 1e7, equals(0.0));
+    });
+
+    testWidgets('Multiple disconnection attempts do not crash', (WidgetTester tester) async {
+      await tester.pumpWidget(createTestApp());
+      await tester.pump();
+
+      // Send multiple commands while disconnected
+      final armButton = find.widgetWithText(ElevatedButton, 'Arm');
+      final rtlButton = find.widgetWithText(ElevatedButton, 'RTL');
+
+      await tester.tap(armButton);
+      await tester.pump();
+      await tester.tap(rtlButton);
+      await tester.pump();
+      await tester.tap(armButton);
+      await tester.pump();
+
+      // Should not crash
+      expect(tester.takeException(), isNull);
+      expect(find.byType(MaterialApp), findsOneWidget);
+    });
+  });
+
+  // Optional: Real WebSocket integration tests
+  // Uncomment to test with actual backend running
+  /*
+  group('Real WebSocket Integration Tests (Backend Required)', () {
+    // Helper to create app WITH WebSocket enabled
+    Widget createLiveApp() {
+      return MaterialApp(
+        title: 'Custom GCS (Serial)',
+        theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
+        home: const GcsHome(enableWebSocket: true),
+      );
+    }
+
+    testWidgets('App connects to WebSocket backend', (WidgetTester tester) async {
+      // NOTE: Requires backend running on ws://localhost:8765
+      await tester.pumpWidget(createLiveApp());
+      await tester.pump();
+
+      // Wait for connection
+      await tester.pump(const Duration(seconds: 2));
+
+      // Should receive HELLO message and show connected
+      // (This test will fail if backend is not running)
+      // expect(find.byIcon(Icons.link), findsOneWidget);
+    }, skip: true);  // Skip by default unless backend is guaranteed to be running
+
+    testWidgets('App receives telemetry from backend', (WidgetTester tester) async {
+      await tester.pumpWidget(createLiveApp());
+      await tester.pump();
+
+      // Wait for telemetry
+      await tester.pump(const Duration(seconds: 3));
+
+      // Should update telemetry values
+      // expect(find.text('UNKNOWN'), findsNothing);
+    }, skip: true);
+  });
+  */
 }

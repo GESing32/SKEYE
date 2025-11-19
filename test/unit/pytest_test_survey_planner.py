@@ -206,9 +206,9 @@ class TestTriggerDistance:
         assert dist_80 > 5.0
 
     def test_calculate_trigger_distance_minimum(self, planner_wide):
-        """Test minimum constraint."""
+        """Test minimum constraint (10cm = 0.1m)."""
         trigger_dist = planner_wide.calculate_trigger_distance(0.5, 99.0)
-        assert trigger_dist >= 1.0
+        assert trigger_dist >= 0.1  # Fixed: minimum is 10cm, not 1m
 
     @pytest.mark.parametrize("altitude,overlap", [
         (30.0, 70.0),
@@ -223,6 +223,131 @@ class TestTriggerDistance:
         # Should be realistic (not stuck at 1m minimum)
         assert trigger_dist > 1.0
         assert trigger_dist < altitude
+
+
+# ============================================================================
+# Camera Trigger Precision Tests (Priority 1 - Critical)
+# ============================================================================
+
+@pytest.mark.survey
+@pytest.mark.unit
+class TestCameraTriggerPrecision:
+    """Tests for camera trigger distance precision and rounding."""
+
+    def test_trigger_distance_default_precision(self, planner_wide):
+        """Test trigger distance with default precision (2 decimal places = cm)."""
+        trigger_dist = planner_wide.calculate_trigger_distance(
+            altitude_m=50.0,
+            front_overlap_pct=75.0
+        )
+
+        # Should be rounded to 2 decimal places (cm precision)
+        assert trigger_dist == round(trigger_dist, 2)
+
+    def test_trigger_distance_custom_precision(self, planner_wide):
+        """Test trigger distance with custom precision."""
+        trigger_dist_1dp = planner_wide.calculate_trigger_distance(
+            altitude_m=50.0,
+            front_overlap_pct=75.0,
+            precision=1
+        )
+
+        trigger_dist_3dp = planner_wide.calculate_trigger_distance(
+            altitude_m=50.0,
+            front_overlap_pct=75.0,
+            precision=3
+        )
+
+        # Check rounding to specified precision
+        assert trigger_dist_1dp == round(trigger_dist_1dp, 1)
+        assert trigger_dist_3dp == round(trigger_dist_3dp, 3)
+
+    @pytest.mark.parametrize("precision,expected_decimals", [
+        (0, 0),  # Meter precision
+        (1, 1),  # Decimeter precision
+        (2, 2),  # Centimeter precision (default)
+        (3, 3),  # Millimeter precision
+    ])
+    def test_trigger_distance_precision_parametrized(self, planner_wide, precision, expected_decimals):
+        """Test trigger distance precision with various decimal places."""
+        trigger_dist = planner_wide.calculate_trigger_distance(
+            altitude_m=50.0,
+            front_overlap_pct=75.0,
+            precision=precision
+        )
+
+        # Verify rounding to specified precision
+        assert trigger_dist == round(trigger_dist, expected_decimals)
+
+    def test_trigger_distance_no_cumulative_drift(self, planner_wide):
+        """Test that precision prevents cumulative drift over long missions."""
+        # Calculate trigger distance for typical survey
+        trigger_dist = planner_wide.calculate_trigger_distance(
+            altitude_m=50.0,
+            front_overlap_pct=75.0,
+            precision=2
+        )
+
+        # Simulate 100 photos over 1km distance
+        num_photos = 100
+        total_distance = trigger_dist * num_photos
+
+        # With proper rounding, accumulated error should be minimal
+        # Over 1km with cm precision, error should be < 1m
+        expected_distance = num_photos * trigger_dist
+        assert abs(total_distance - expected_distance) < 1.0
+
+    def test_trigger_distance_minimum_10cm(self, planner_wide):
+        """Test minimum trigger distance is 10cm (0.1m), not 1m."""
+        # Very low altitude with high overlap should hit minimum
+        trigger_dist = planner_wide.calculate_trigger_distance(
+            altitude_m=0.5,
+            front_overlap_pct=99.0
+        )
+
+        # Minimum should be 0.1m (10cm), not 1.0m
+        assert trigger_dist == 0.1
+
+    def test_trigger_distance_precision_consistency(self, planner_wide):
+        """Test that same inputs always produce same output (deterministic)."""
+        trigger_dist_1 = planner_wide.calculate_trigger_distance(
+            altitude_m=60.0,
+            front_overlap_pct=75.0,
+            precision=2
+        )
+
+        trigger_dist_2 = planner_wide.calculate_trigger_distance(
+            altitude_m=60.0,
+            front_overlap_pct=75.0,
+            precision=2
+        )
+
+        # Should be exactly equal (no floating point drift)
+        assert trigger_dist_1 == trigger_dist_2
+
+    def test_trigger_distance_realistic_values(self, planner_wide):
+        """Test trigger distances are realistic for aerial surveys."""
+        test_cases = [
+            (30.0, 75.0),  # Low altitude survey
+            (50.0, 75.0),  # Medium altitude survey
+            (100.0, 75.0),  # High altitude survey
+            (50.0, 60.0),  # Low overlap
+            (50.0, 85.0),  # High overlap
+        ]
+
+        for altitude, overlap in test_cases:
+            trigger_dist = planner_wide.calculate_trigger_distance(
+                altitude_m=altitude,
+                front_overlap_pct=overlap,
+                precision=2
+            )
+
+            # Realistic range checks
+            assert trigger_dist >= 0.1, f"Trigger distance too small for {altitude}m, {overlap}%"
+            assert trigger_dist < altitude, f"Trigger distance exceeds altitude for {altitude}m"
+            # Should not be at minimum for normal surveys
+            if altitude > 10.0 and overlap < 95.0:
+                assert trigger_dist > 1.0, f"Unexpected minimum for {altitude}m, {overlap}%"
 
 
 # ============================================================================

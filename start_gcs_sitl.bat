@@ -4,9 +4,12 @@ REM
 REM Quick launcher for SITL testing with Mission Planner simulator
 REM
 REM Usage:
-REM   start_gcs_sitl.bat                    - Use Mission Planner (default)
-REM   start_gcs_sitl.bat mavproxy_udp       - Use MAVProxy UDP
+REM   start_gcs_sitl.bat                    - Use UDP (default - works with Mission Planner)
+REM   start_gcs_sitl.bat mission_planner    - Use TCP (Mission Planner must be disconnected)
 REM   start_gcs_sitl.bat mavproxy_tcp       - Use MAVProxy TCP
+REM
+REM IMPORTANT: Mission Planner SITL outputs to UDP:14550 by default.
+REM            Using UDP allows both Mission Planner and SKEYE to connect simultaneously!
 REM
 
 echo ============================================================
@@ -14,9 +17,9 @@ echo   SKEYE GCS - SITL Mode
 echo ============================================================
 echo.
 
-REM Get preset name from argument (default to mission_planner)
+REM Get preset name from argument (default to mavproxy_udp for simultaneous use)
 set PRESET=%1
-if "%PRESET%"=="" set PRESET=mission_planner
+if "%PRESET%"=="" set PRESET=mavproxy_udp
 
 echo Starting SKEYE GCS with SITL preset: %PRESET%
 echo.

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import math
 import os
 import signal
 import serial
@@ -9,32 +10,177 @@ import time
 from typing import Any, Dict, Set, Optional, List
 
 import websockets
+from pymavlink import mavutil
 from gcs_core import MavSerialCore, RELAY_TYPES
 from survey_planner import SurveyPlanner, CameraSpec
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("GCS")
 
+
+def clean_for_json(obj):
+    """Recursively clean an object for JSON serialization by replacing NaN/Inf with null."""
+    if isinstance(obj, dict):
+        return {k: clean_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [clean_for_json(item) for item in obj]
+    elif isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    return obj
+
 class WebSocketHub:
     def __init__(self):
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
         self._telemetry_cache = {}  # Cache last telemetry values
-        
-    async def broadcast(self, payload: Dict[str, Any]):
+        self._batch_buffer: List[Dict[str, Any]] = []  # Buffer for batched messages
+        self._last_batch_time: float = 0.0  # Last batch broadcast time
+        self._batch_interval_s: float = 0.1  # Batch interval (100ms)
+
+        # High-frequency message types that benefit from batching
+        self.HIGH_FREQUENCY_TYPES = {
+            "GLOBAL_POSITION_INT",
+            "ATTITUDE",
+            "VFR_HUD",
+        }
+
+    async def register(self, websocket):
+        """Register a new WebSocket client"""
+        self.clients.add(websocket)
+        log.info(f"Client connected. Total clients: {len(self.clients)}")
+
+    async def unregister(self, websocket):
+        """Unregister a WebSocket client"""
+        self.clients.discard(websocket)
+        log.info(f"Client disconnected. Total clients: {len(self.clients)}")
+
+    async def broadcast(self, payload: Dict[str, Any], batch: bool = True):
+        """
+        Broadcast message to all connected clients with optional batching.
+
+        Args:
+            payload: Message to broadcast
+            batch: If True, batch high-frequency messages (default: True)
+        """
         if not self.clients:
             return
-        # Only broadcast if values changed significantly
+
         msg_type = payload.get("type")
+
+        # Special handling for GLOBAL_POSITION_INT to ensure first position is always sent
+        if msg_type == "GLOBAL_POSITION_INT":
+            is_first = msg_type not in self._telemetry_cache
+            lat = payload.get("lat", 0) / 1e7
+            lon = payload.get("lon", 0) / 1e7
+
+            if is_first:
+                log.info(f"📍 First position: lat={lat:.6f}, lon={lon:.6f} - sending immediately")
+                self._telemetry_cache[msg_type] = payload
+                await self._send_message(payload)  # Send first position immediately, unbatched
+                return
+
+        # Only broadcast if values changed significantly
         if msg_type in self._telemetry_cache:
             if not self._is_significant_change(payload, self._telemetry_cache[msg_type]):
                 return
+
         self._telemetry_cache[msg_type] = payload
-        data = json.dumps(payload)
+
+        # Batch high-frequency messages
+        if batch and msg_type in self.HIGH_FREQUENCY_TYPES:
+            self._batch_buffer.append(payload)
+
+            # Send batch if interval elapsed
+            current_time = time.time()
+            if current_time - self._last_batch_time >= self._batch_interval_s:
+                await self._send_batch()
+                self._last_batch_time = current_time
+        else:
+            # Send immediately for critical/low-frequency messages
+            await self._send_message(payload)
+
+    async def _send_message(self, payload: Dict[str, Any]):
+        """Send a single message to all clients."""
+        # Clean NaN/Inf values before JSON serialization
+        cleaned_payload = clean_for_json(payload)
+        data = json.dumps(cleaned_payload)
         await asyncio.gather(*[c.send(data) for c in list(self.clients)], return_exceptions=True)
-        
+
+    async def _send_batch(self):
+        """Send batched messages to all clients."""
+        if not self._batch_buffer:
+            return
+
+        # Create batch message
+        batch_payload = {
+            "type": "TELEMETRY_BATCH",
+            "messages": self._batch_buffer.copy(),
+            "count": len(self._batch_buffer),
+            "timestamp": time.time()
+        }
+
+        # Clean and send
+        cleaned_payload = clean_for_json(batch_payload)
+        data = json.dumps(cleaned_payload)
+        await asyncio.gather(*[c.send(data) for c in list(self.clients)], return_exceptions=True)
+
+        # Clear buffer
+        self._batch_buffer.clear()
+
     def _is_significant_change(self, new_data: Dict, old_data: Dict, threshold: float = 0.1) -> bool:
-        # Compare numeric values with threshold
-        return True  # Implement comparison logic based on message type
+        """
+        Compare messages to determine if change is significant enough to broadcast.
+
+        Args:
+            new_data: New message data
+            old_data: Previous message data
+            threshold: Threshold for numeric value changes (default: 10%)
+
+        Returns:
+            True if change is significant, False otherwise
+        """
+        msg_type = new_data.get("type")
+
+        # Always broadcast critical message types
+        critical_types = {"HEARTBEAT", "SYS_STATUS", "MISSION_CURRENT", "MISSION_ACK", "STATE_UPDATE", "ACK", "ERROR"}
+        if msg_type in critical_types:
+            return True
+
+        # Compare numeric fields with threshold
+        if msg_type == "GLOBAL_POSITION_INT":
+            # Always send first position update (when old_data is empty or missing position)
+            if not old_data or "lat" not in old_data or old_data.get("lat", 0) == 0:
+                return True
+
+            # Check position change (significant if > 0.5m)
+            lat_change = abs(new_data.get("lat", 0) - old_data.get("lat", 0)) / 1e7
+            lon_change = abs(new_data.get("lon", 0) - old_data.get("lon", 0)) / 1e7
+            alt_change = abs(new_data.get("relative_alt", 0) - old_data.get("relative_alt", 0)) / 1000.0
+
+            # More sensitive threshold: 0.5m instead of 1m
+            if lat_change > 0.000005 or lon_change > 0.000005 or alt_change > 0.5:
+                return True
+
+        elif msg_type == "VFR_HUD":
+            # Check airspeed/groundspeed change (> 0.5 m/s)
+            airspeed_change = abs(new_data.get("airspeed", 0) - old_data.get("airspeed", 0))
+            groundspeed_change = abs(new_data.get("groundspeed", 0) - old_data.get("groundspeed", 0))
+
+            if airspeed_change > 0.5 or groundspeed_change > 0.5:
+                return True
+
+        elif msg_type == "ATTITUDE":
+            # Check attitude change (> 5 degrees)
+            roll_change = abs(new_data.get("roll", 0) - old_data.get("roll", 0))
+            pitch_change = abs(new_data.get("pitch", 0) - old_data.get("pitch", 0))
+            yaw_change = abs(new_data.get("yaw", 0) - old_data.get("yaw", 0))
+
+            if roll_change > 0.087 or pitch_change > 0.087 or yaw_change > 0.087:  # ~5 degrees
+                return True
+
+        # Default: no significant change
+        return False
 
 class MessageQueue:
     def __init__(self, maxsize: int = 100):
@@ -143,91 +289,284 @@ async def telemetry_loop(core: MavSerialCore, hub: WebSocketHub, queue: MessageQ
             log.warning(f"telemetry loop error: {e}")
             await asyncio.sleep(0.1)  # Longer sleep on error
 
-async def handle_client(ws, _path, core: MavSerialCore, hub: WebSocketHub):
-    hub.clients.add(ws)
-    log.info("Client connected")
+async def handle_client(websocket, core: MavSerialCore, hub: WebSocketHub):
+    """Handle individual WebSocket client (websockets 14.0+ API)"""
+    await hub.register(websocket)
+    
     try:
-        await ws.send(json.dumps({
+        # Send initial HELLO message
+        await websocket.send(json.dumps({
             "type": "HELLO",
+            "link_ok": core.link_ok(),
             "mode": core.mode_str,
             "armed": core.armed,
-            "link_ok": core.link_ok(),
         }))
-        async for raw in ws:
+        
+        # Handle incoming commands
+        async for message in websocket:
             try:
-                cmd = json.loads(raw)
-            except Exception as e:
-                await ws.send(json.dumps({"type": "ERROR", "message": f"invalid JSON: {e}"}))
-                continue
-            c = cmd.get("cmd")
-            if not c:
-                await ws.send(json.dumps({"type": "ERROR", "message": "missing 'cmd'"}))
-                continue
-            try:
-                if c == "arm":
-                    core.arm(bool(cmd.get("value", True)))
-                elif c == "mode":
-                    core.set_mode(str(cmd["mode"]))
-                elif c == "goto":
-                    core.goto_guided(float(cmd["lat"]), float(cmd["lon"]), float(cmd["alt_rel"]))
-                elif c == "speed":
-                    core.set_speed(float(cmd["m_s"]))
-                elif c == "rtl":
-                    core.rtl()
-                elif c == "mission_clear":
-                    core.mission_clear_all()
-                elif c == "mission_upload":
-                    items = cmd.get("items", [])
-                    core.mission_upload_begin(items)
-                elif c == "mission_start":
-                    core.mission_start(int(cmd.get("first_item", 0)), int(cmd.get("last_item", 0xFFFF)))
-                elif c == "survey_plan":
-                    # Generate survey mission from polygon
-                    polygon = cmd.get("polygon", [])  # List of {"lat": x, "lon": y}
-                    camera_config = cmd.get("camera", {})
-                    altitude = float(cmd.get("altitude", 50.0))
-                    overlap_front = float(cmd.get("overlap_front", 75.0))
-                    overlap_side = float(cmd.get("overlap_side", 75.0))  #standard is 65% but 75% minimum from ER
-                    grid_angle = float(cmd.get("grid_angle", 0.0))
-                    hover_and_capture = bool(cmd.get("hover_and_capture", False))
+                data = json.loads(message)
+                command = data.get("command")
+                
+                if command == "arm":
+                    force = data.get("force", True)
+                    core.arm(should_arm=True)
+                    log.info(f"ARM command executed")
 
-                    # Create camera from config or use default
-                    camera = CameraSpec(
-                        name=camera_config.get("name", "Custom"),
-                        sensor_width=float(camera_config.get("sensor_width", 6.17)),
-                        sensor_height=float(camera_config.get("sensor_height", 4.55)),
-                        focal_length=float(camera_config.get("focal_length", 4.15)),
-                        image_width=int(camera_config.get("image_width", 4000)),
-                        image_height=int(camera_config.get("image_height", 3000))
-                    )
-
-                    planner = SurveyPlanner(camera)
-                    result = planner.generate_survey(
-                        polygon=[(p["lat"], p["lon"]) for p in polygon],
-                        altitude_rel=altitude,
-                        overlap_front=overlap_front,
-                        overlap_side=overlap_side,
-                        grid_angle_deg=grid_angle,
-                        hover_and_capture=hover_and_capture
-                    )
-
-                    # Send back mission items and statistics
-                    await ws.send(json.dumps({
-                        "type": "SURVEY_RESULT",
-                        "items": result["mission_items"],
-                        "statistics": result["statistics"],
-                        "transects": result["transects"]
+                    # Send ACK to requesting client
+                    await websocket.send(json.dumps({
+                        "type": "ACK",
+                        "command": "arm",
+                        "success": True
                     }))
-                    continue
+
+                    # Broadcast state change to all clients (no batching for immediate delivery)
+                    await hub.broadcast({
+                        "type": "STATE_UPDATE",
+                        "armed": True
+                    }, batch=False)
+
+                elif command == "disarm":
+                    core.arm(should_arm=False)
+                    log.info(f"DISARM command executed")
+
+                    # Send ACK to requesting client
+                    await websocket.send(json.dumps({
+                        "type": "ACK",
+                        "command": "disarm",
+                        "success": True
+                    }))
+
+                    # Broadcast state change to all clients (no batching for immediate delivery)
+                    await hub.broadcast({
+                        "type": "STATE_UPDATE",
+                        "armed": False
+                    }, batch=False)
+
+                elif command == "set_mode":
+                    mode = data.get("mode", "STABILIZE")
+                    core.set_mode(mode)
+                    log.info(f"SET_MODE command: mode={mode}")
+
+                    # Send ACK to requesting client
+                    await websocket.send(json.dumps({
+                        "type": "ACK",
+                        "command": "set_mode",
+                        "mode": mode,
+                        "success": True
+                    }))
+
+                    # Broadcast state change to all clients (no batching for immediate delivery)
+                    await hub.broadcast({
+                        "type": "STATE_UPDATE",
+                        "mode": mode
+                    }, batch=False)
+
+                elif command == "goto":
+                    lat = data.get("lat")
+                    lon = data.get("lon")
+                    alt = data.get("alt", 20.0)
+                    if lat and lon:
+                        core.goto_guided(lat, lon, alt)
+                        log.info(f"GOTO command: lat={lat}, lon={lon}, alt={alt}")
+                        await websocket.send(json.dumps({
+                            "type": "ACK",
+                            "command": "goto",
+                            "success": True
+                        }))
+                
+                elif command == "mission_clear":
+                    core.mission_clear_all()
+                    log.info(f"MISSION_CLEAR executed")
+                    await websocket.send(json.dumps({
+                        "type": "ACK",
+                        "command": "mission_clear",
+                        "success": True
+                    }))
+
+                elif command == "mission_upload":
+                    mission_items = data.get("mission_items", [])
+                    log.info(f"MISSION_UPLOAD: {len(mission_items)} items")
+
+                    # Convert Flutter float coordinates to MAVLink int format
+                    for i, item in enumerate(mission_items):
+                        # Add seq field if missing
+                        if "seq" not in item:
+                            item["seq"] = i
+
+                        # Convert frame from 3 (GLOBAL_RELATIVE_ALT) to 6 (GLOBAL_RELATIVE_ALT_INT)
+                        if item.get("frame") == 3:
+                            item["frame"] = 6
+
+                        # Convert x, y from float degrees to int (degrees * 1e7)
+                        if "x" in item and isinstance(item["x"], float):
+                            item["x"] = int(item["x"] * 1e7)
+                        if "y" in item and isinstance(item["y"], float):
+                            item["y"] = int(item["y"] * 1e7)
+
+                    # Auto-insert TAKEOFF command if missing (ArduPilot copter requirement)
+                    if mission_items:
+                        first_cmd = mission_items[0].get("command")
+                        log.info(f"First mission item command: {first_cmd}")
+
+                        if first_cmd != 22:
+                            # For ArduCopter: TAKEOFF uses lat=0, lon=0 to takeoff from current position
+                            # The altitude parameter specifies the target altitude
+                            takeoff_alt = data.get("alt", 20.0)  # Default takeoff altitude (meters, relative)
+
+                            takeoff_item = {
+                                "seq": 0,
+                                "frame": 6,  # MAV_FRAME_GLOBAL_RELATIVE_ALT_INT (must match other waypoints)
+                                "command": 22,  # MAV_CMD_NAV_TAKEOFF
+                                "current": 1,
+                                "autocontinue": 1,
+                                "param1": 0.0,  # pitch (copter: min pitch if airspeed sensor)
+                                "param2": 0.0,  # empty
+                                "param3": 0.0,  # empty
+                                "param4": 0.0,  # yaw angle (0 = use current heading)
+                                "x": 0,  # lat = 0 for copters (takeoff from current position)
+                                "y": 0,  # lon = 0 for copters (takeoff from current position)
+                                "z": takeoff_alt,
+                                "mission_type": 0,  # MAV_MISSION_TYPE_MISSION
+                            }
+                            mission_items.insert(0, takeoff_item)
+                            log.info(f"✓ Auto-inserted TAKEOFF command (cmd=22) at {takeoff_alt}m altitude (from current position)")
+
+                            # Re-sequence all items
+                            for idx, item in enumerate(mission_items):
+                                item["seq"] = idx
+                                # Only first item (TAKEOFF) should be marked as current
+                                item["current"] = 1 if idx == 0 else 0
+                                # Ensure mission_type is set for all items
+                                if "mission_type" not in item:
+                                    item["mission_type"] = 0
+
+                            log.info(f"Mission now has {len(mission_items)} items (including TAKEOFF)")
+                        else:
+                            log.info("TAKEOFF command already present, no insertion needed")
+
+                    core.mission_upload_begin(mission_items)
+                    await websocket.send(json.dumps({
+                        "type": "ACK",
+                        "command": "mission_upload",
+                        "success": True,
+                        "count": len(mission_items)
+                    }))
+
+                elif command == "mission_start":
+                    log.info("MISSION_START command received")
+                    core.mission_start()
+                    await websocket.send(json.dumps({
+                        "type": "ACK",
+                        "command": "mission_start",
+                        "success": True
+                    }))
+
+                elif command == "takeoff":
+                    alt = data.get("alt", 20.0)
+                    log.info(f"TAKEOFF command received: alt={alt}m")
+
+                    # Send MAV_CMD_NAV_TAKEOFF command
+                    core.m.mav.command_long_send(
+                        core.target_system,
+                        core.target_component,
+                        mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
+                        0,  # confirmation
+                        0,  # param1: pitch
+                        0,  # param2: empty
+                        0,  # param3: empty
+                        0,  # param4: yaw angle (0 = north)
+                        0,  # param5: latitude (0 = current position)
+                        0,  # param6: longitude (0 = current position)
+                        alt,  # param7: altitude
+                    )
+
+                    await websocket.send(json.dumps({
+                        "type": "ACK",
+                        "command": "takeoff",
+                        "success": True,
+                        "altitude": alt
+                    }))
+
+                elif command == "generate_survey":
+                    # QGC-style survey generation from polygon waypoints
+                    from survey_planner import SurveyConfig, TriggerMode, EntryPoint, LatLon
+
+                    polygon_points = data.get("polygon", [])
+                    if len(polygon_points) < 3:
+                        await websocket.send(json.dumps({
+                            "type": "ERROR",
+                            "command": "generate_survey",
+                            "error": "Survey requires at least 3 polygon points"
+                        }))
+                        log.error("Survey generation failed: insufficient polygon points")
+                        return
+
+                    # Convert polygon points to LatLon objects
+                    polygon = [LatLon(lat=p["lat"], lon=p["lon"]) for p in polygon_points]
+
+                    # Parse survey configuration
+                    altitude = data.get("altitude", 50.0)
+                    speed = data.get("speed", 5.0)
+                    front_overlap = data.get("front_overlap", 75.0)
+                    side_overlap = data.get("side_overlap", 75.0)
+                    grid_angle = data.get("grid_angle", 0.0)
+                    turnaround_dist = data.get("turnaround_dist", 10.0)
+
+                    log.info(f"GENERATE_SURVEY: {len(polygon_points)} polygon points")
+                    log.info(f"  Altitude: {altitude}m, Speed: {speed}m/s")
+                    log.info(f"  Overlap: {front_overlap}% front, {side_overlap}% side")
+                    log.info(f"  Grid angle: {grid_angle}°")
+
+                    # Create camera and survey config
+                    camera = CameraSpec.sentera_double_4k_default()
+                    config = SurveyConfig(
+                        altitude_m=altitude,
+                        speed_m_s=speed,
+                        front_overlap_pct=front_overlap,
+                        side_overlap_pct=side_overlap,
+                        grid_angle_deg=grid_angle,
+                        entry_point=EntryPoint.TOP_LEFT,
+                        turnaround_dist_m=turnaround_dist,
+                        trigger_mode=TriggerMode.DISTANCE,
+                        camera_angle_deg=90.0,  # Nadir (straight down)
+                    )
+
+                    # Generate survey mission
+                    planner = SurveyPlanner(camera)
+                    mission_items, statistics = planner.generate_mission_items(polygon, config)
+
+                    log.info(f"✓ Survey generated: {len(mission_items)} waypoints")
+                    log.info(f"  Photos: {statistics['photo_count']}")
+                    log.info(f"  Distance: {statistics['flight_distance_m']}m")
+                    log.info(f"  Flight time: {statistics['flight_time_min']} min")
+                    log.info(f"  Coverage: {statistics['coverage_area_acres']} acres")
+                    log.info(f"  GSD: {statistics['gsd_cm_px']} cm/px")
+
+                    # Send survey mission back to client (clean NaN/Inf values for JSON)
+                    response = clean_for_json({
+                        "type": "SURVEY_GENERATED",
+                        "command": "generate_survey",
+                        "success": True,
+                        "mission_items": mission_items,
+                        "statistics": statistics
+                    })
+                    await websocket.send(json.dumps(response))
+
                 else:
-                    await ws.send(json.dumps({"type": "ERROR", "message": f"unknown cmd {c}"}))
-                    continue
-                await ws.send(json.dumps({"type": "ACK", "cmd": c}))
+                    log.warning(f"Unknown command: {command}")
+                    
+            except json.JSONDecodeError as e:
+                log.error(f"JSON decode error: {e}")
             except Exception as e:
-                await ws.send(json.dumps({"type": "ERROR", "message": str(e)}))
-    finally:
-        hub.clients.discard(ws)
+                log.error(f"Command handler error: {e}")
+                
+    except websockets.ConnectionClosed:
         log.info("Client disconnected")
+    except Exception as e:
+        log.error(f"Client handler error: {e}")
+    finally:
+        await hub.unregister(websocket)
 
 def auto_detect_serial_device(preferred_baud: int = 57600) -> Optional[tuple[str, int]]:
     """
@@ -378,9 +717,18 @@ def verify_mavlink_device(port: str, baud: int, timeout: float = 3.0) -> bool:
         return False
 
 async def main():
-    # Try to get device from environment variable first
+    import sys
+
+    # Priority: Environment variables first (for run_gcs_sitl.py), then command line args
     serial_dev = os.environ.get("GCS_SERIAL", None)
     baud = int(os.environ.get("GCS_BAUD", "57600"))
+
+    # Override with command line arguments if env vars not set
+    # Example: python run_gcs.py udp:127.0.0.1:14550 57600
+    if not serial_dev and len(sys.argv) >= 2:
+        serial_dev = sys.argv[1]
+        baud = int(sys.argv[2]) if len(sys.argv) >= 3 else 57600
+
     ws_host = os.environ.get("GCS_WS_HOST", "0.0.0.0")
     ws_port = int(os.environ.get("GCS_WS_PORT", "8765"))
 
@@ -409,7 +757,7 @@ async def main():
     rate_limiter = CommandRateLimiter()
     
     server = await websockets.serve(
-        lambda ws, path: handle_client(ws, path, core, hub, rate_limiter),
+        lambda ws: handle_client(ws, core, hub),
         ws_host, ws_port
     )
     

@@ -762,19 +762,33 @@ class TestMissionUpload:
         mock_mav.mav.mission_clear_all_send.assert_called_once_with(1, 1)
 
     def test_mission_start(self, mav_serial_core, mock_mav, mocker):
-        """Test mission start command."""
-        mocker.patch('gcs_core.mavutil.mavlink.MAV_CMD_MISSION_START', 300)
+        """Test mission start command arms vehicle and switches to AUTO mode.
 
+        In ArduPilot, missions require the vehicle to be armed and in AUTO mode.
+        This test verifies that mission_start():
+        1. Arms the vehicle
+        2. Switches to AUTO mode
+        """
         mav_serial_core.target_system = 1
         mav_serial_core.target_component = 1
 
-        mav_serial_core.mission_start(first_item=0, last_item=10)
+        # Mock the arm method to track if it's called
+        mock_arm = mocker.patch.object(mav_serial_core, 'arm')
 
-        mock_mav.mav.command_long_send.assert_called_once()
-        args = mock_mav.mav.command_long_send.call_args[0]
-        assert args[2] == 300  # MAV_CMD_MISSION_START
-        assert args[4] == 0  # first_item
-        assert args[5] == 10  # last_item
+        # Set vehicle as not armed to test the full arm sequence
+        mav_serial_core.armed = False
+
+        mav_serial_core.mission_start()
+
+        # Verify that arm was called with should_arm=True
+        mock_arm.assert_called_once_with(should_arm=True)
+
+        # Verify that set_mode_apm was called twice: GUIDED then AUTO
+        # (ArduPilot doesn't allow arming in AUTO mode)
+        assert mock_mav.set_mode_apm.call_count == 2, "Should call set_mode twice (GUIDED then AUTO)"
+        calls = [str(call) for call in mock_mav.set_mode_apm.call_args_list]
+        assert "GUIDED" in calls[0], f"First call should be GUIDED, got {calls[0]}"
+        assert "AUTO" in calls[1], f"Second call should be AUTO, got {calls[1]}"
 
     def test_mission_upload_begin(self, mav_serial_core, mock_mav):
         """Test mission upload initialization."""
@@ -954,3 +968,178 @@ class TestErrorHandling:
 
         # Should not cause errors (no-op)
         assert mav_serial_core._mission_upload_in_progress is False
+
+
+# ============================================================================
+# Mission Verification Tests (Priority 1 - Critical)
+# ============================================================================
+
+@pytest.mark.mavlink
+@pytest.mark.unit
+class TestMissionVerification:
+    """Tests for mission upload verification with ACK checks."""
+
+    def test_mission_upload_with_verification_success(self, mav_serial_core, mock_mav, mocker):
+        """Test mission upload with verification succeeds when ACK is received."""
+        mocker.patch('gcs_core.mavutil.mavlink.MAV_MISSION_ACCEPTED', 0)
+
+        items = [
+            {"seq": 0, "command": 16, "x": 380000000, "y": -845000000, "z": 50.0},
+            {"seq": 1, "command": 16, "x": 380100000, "y": -845000000, "z": 50.0},
+        ]
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        # Mock ACK response
+        mock_ack_msg = Mock()
+        mock_ack_msg.to_dict.return_value = {"type": "MISSION_ACK", "type": 0}
+
+        # Mock mission count response
+        mock_count_msg = Mock()
+        mock_count_msg.count = 2
+
+        mock_mav.recv_match.side_effect = [mock_ack_msg, mock_count_msg]
+
+        # Should not raise exception
+        mav_serial_core.mission_upload_begin(items, verify=True, timeout=10.0)
+
+        # Verify mission count was sent
+        mock_mav.mav.mission_count_send.assert_called_once_with(1, 1, 2)
+
+    def test_mission_upload_with_verification_timeout(self, mav_serial_core, mock_mav, mocker):
+        """Test mission upload with verification times out when no ACK received."""
+        items = [
+            {"seq": 0, "command": 16, "x": 380000000, "y": -845000000, "z": 50.0},
+        ]
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        # Mock no ACK response (timeout)
+        mock_mav.recv_match.return_value = None
+
+        # Should raise TimeoutError
+        with pytest.raises(TimeoutError, match="Did not receive MISSION_ACK"):
+            mav_serial_core.mission_upload_begin(items, verify=True, timeout=1.0)
+
+    def test_mission_upload_with_verification_failed_ack(self, mav_serial_core, mock_mav, mocker):
+        """Test mission upload with verification fails when ACK indicates error."""
+        mocker.patch('gcs_core.mavutil.mavlink.MAV_MISSION_ACCEPTED', 0)
+        mocker.patch('gcs_core.mavutil.mavlink.enums', {
+            'MAV_MISSION_RESULT': {
+                1: {'name': 'MAV_MISSION_ERROR'}
+            }
+        })
+
+        items = [
+            {"seq": 0, "command": 16, "x": 380000000, "y": -845000000, "z": 50.0},
+        ]
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        # Mock failed ACK response
+        mock_ack_msg = Mock()
+        mock_ack_msg.to_dict.return_value = {"type": "MISSION_ACK", "type": 1}  # Error
+        mock_mav.recv_match.return_value = mock_ack_msg
+
+        # Should raise RuntimeError
+        with pytest.raises(RuntimeError, match="Mission upload failed"):
+            mav_serial_core.mission_upload_begin(items, verify=True, timeout=10.0)
+
+    def test_mission_upload_with_verification_count_mismatch(self, mav_serial_core, mock_mav, mocker):
+        """Test mission upload verification fails when mission count doesn't match."""
+        mocker.patch('gcs_core.mavutil.mavlink.MAV_MISSION_ACCEPTED', 0)
+
+        items = [
+            {"seq": 0, "command": 16, "x": 380000000, "y": -845000000, "z": 50.0},
+            {"seq": 1, "command": 16, "x": 380100000, "y": -845000000, "z": 50.0},
+        ]
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        # Mock ACK response
+        mock_ack_msg = Mock()
+        mock_ack_msg.to_dict.return_value = {"type": "MISSION_ACK", "type": 0}
+
+        # Mock mission count response with wrong count
+        mock_count_msg = Mock()
+        mock_count_msg.count = 1  # Expected 2, got 1
+
+        mock_mav.recv_match.side_effect = [mock_ack_msg, mock_count_msg]
+
+        # Should raise RuntimeError
+        with pytest.raises(RuntimeError, match="Mission verification failed"):
+            mav_serial_core.mission_upload_begin(items, verify=True, timeout=10.0)
+
+    def test_mission_upload_without_verification(self, mav_serial_core, mock_mav):
+        """Test mission upload without verification (original behavior)."""
+        items = [
+            {"seq": 0, "command": 16, "x": 380000000, "y": -845000000, "z": 50.0},
+        ]
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        # Should not raise exception and not wait for ACK
+        mav_serial_core.mission_upload_begin(items, verify=False)
+
+        # Should only send mission count
+        mock_mav.mav.mission_count_send.assert_called_once_with(1, 1, 1)
+
+    def test_mission_upload_empty_items_list(self, mav_serial_core, mock_mav):
+        """Test mission upload with empty items list raises ValueError."""
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        # Should raise ValueError
+        with pytest.raises(ValueError, match="Mission items list cannot be empty"):
+            mav_serial_core.mission_upload_begin([], verify=False)
+
+    def test_wait_for_ack_success(self, mav_serial_core, mock_mav):
+        """Test _wait_for_ack successfully receives ACK message."""
+        mock_ack_msg = Mock()
+        mock_ack_msg.to_dict.return_value = {"type": "MISSION_ACK", "result": 0}
+        mock_mav.recv_match.return_value = mock_ack_msg
+
+        ack = mav_serial_core._wait_for_ack(timeout=5.0)
+
+        assert ack is not None
+        assert ack["type"] == "MISSION_ACK"
+        assert mav_serial_core._mission_ack_received is True
+
+    def test_wait_for_ack_timeout(self, mav_serial_core, mock_mav):
+        """Test _wait_for_ack times out when no ACK received."""
+        mock_mav.recv_match.return_value = None
+
+        ack = mav_serial_core._wait_for_ack(timeout=0.1)
+
+        assert ack is None
+        assert mav_serial_core._mission_ack_received is False
+
+    def test_wait_for_mission_count_success(self, mav_serial_core, mock_mav):
+        """Test _wait_for_mission_count successfully receives count."""
+        mock_count_msg = Mock()
+        mock_count_msg.count = 5
+        mock_mav.recv_match.return_value = mock_count_msg
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        count = mav_serial_core._wait_for_mission_count(timeout=5.0)
+
+        assert count == 5
+        mock_mav.mav.mission_request_list_send.assert_called_once_with(1, 1)
+
+    def test_wait_for_mission_count_timeout(self, mav_serial_core, mock_mav):
+        """Test _wait_for_mission_count times out when no response."""
+        mock_mav.recv_match.return_value = None
+
+        mav_serial_core.target_system = 1
+        mav_serial_core.target_component = 1
+
+        count = mav_serial_core._wait_for_mission_count(timeout=0.1)
+
+        assert count is None

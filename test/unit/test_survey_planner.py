@@ -199,12 +199,13 @@ class TestSurveyPlanner(unittest.TestCase):
         self.assertGreater(dist_80, 5.0)
 
     def test_calculate_trigger_distance_minimum(self):
-        """Test trigger distance has minimum constraint."""
+        """Test trigger distance has minimum constraint (10cm = 0.1m)."""
         # At very low altitude with high overlap, minimum kicks in
         trigger_dist = self.planner.calculate_trigger_distance(1.0, 99.0)
 
-        # Should respect minimum from camera trigger rate
-        self.assertGreaterEqual(trigger_dist, 1.0)
+        # Should respect minimum (10cm = 0.1m, not 1.0m)
+        self.assertGreaterEqual(trigger_dist, 0.1)
+        self.assertEqual(trigger_dist, 0.1)  # Should be exactly at minimum
 
     def test_calculate_transect_spacing_75_overlap(self):
         """Test transect spacing - FIXED to expect realistic values."""

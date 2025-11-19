@@ -1,0 +1,50 @@
+# =============================================================================
+# Runtime Dependencies for SKEYE Flight System
+# =============================================================================
+#
+# Install with: pip install -r requirements.txt
+#
+
+# MAVLink Communication
+# -----------------------------------------------------------------------------
+pymavlink>=2.4.0              # MAVLink protocol implementation
+pyserial>=3.5                 # Serial port communication
+
+# WebSocket Server
+# -----------------------------------------------------------------------------
+websockets>=15.0.0            # WebSocket server for GCS communication
+
+# =============================================================================
+# Installation Instructions
+# =============================================================================
+#
+# Create and activate virtual environment:
+#   python -m venv .venv
+#
+#   Windows:
+#     .venv\Scripts\activate
+#
+#   Linux/Mac:
+#     source .venv/bin/activate
+#
+# Install runtime dependencies:
+#   pip install -r requirements.txt
+#
+# Install test dependencies (optional):
+#   pip install -r requirements-test.txt
+#
+# Verify installation:
+#   python -c "import pymavlink; print(pymavlink.__version__)"
+#   python -c "import websockets; print(websockets.__version__)"
+#
+# =============================================================================
+# Usage
+# =============================================================================
+#
+# Run the GCS WebSocket server:
+#   python src/flight-system/v2/run_gcs.py
+#
+# Run with SITL simulation:
+#   python src/flight-system/v2/run_gcs_sitl.py
+#
+# =============================================================================

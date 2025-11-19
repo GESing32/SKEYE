@@ -206,18 +206,20 @@ class SurveyPlanner:
         self,
         altitude_m: float,
         front_overlap_pct: float,
-        camera_angle_deg: float = 90.0
+        camera_angle_deg: float = 90.0,
+        precision: int = 2
     ) -> float:
         """
-        Calculate camera trigger distance for desired overlap.
+        Calculate camera trigger distance for desired overlap with configurable precision.
 
         Args:
             altitude_m: Flight altitude
             front_overlap_pct: Front overlap percentage (0-100)
             camera_angle_deg: Camera angle (90 = nadir)
+            precision: Decimal places for rounding (default: 2 = cm precision)
 
         Returns:
-            Trigger distance in meters
+            Trigger distance in meters (rounded to specified precision)
         """
         # Validate overlap based on industry standards
         if front_overlap_pct > 90:
@@ -225,7 +227,7 @@ class SurveyPlanner:
                          f"Minimal accuracy gain with 4x processing cost.")
         elif front_overlap_pct < 60:
             warnings.warn(f"Front overlap {front_overlap_pct}% < 60% below recommended minimum.")
-        
+
         gsd_cm = self.calculate_gsd(altitude_m, camera_angle_deg)
         gsd = gsd_cm / 100.0  # Convert to meters/pixel
         image_footprint_length = gsd * self.camera.image_height_px
@@ -234,7 +236,10 @@ class SurveyPlanner:
         # Distance between photo centers
         trigger_dist = image_footprint_length * (1.0 - overlap_fraction)
 
-        return max(trigger_dist, 1)  # Minimum 10cm
+        # Round to specified precision for MAVLink transmission (default: cm precision)
+        trigger_dist = round(trigger_dist, precision)
+
+        return max(trigger_dist, 0.1)  # Minimum 10cm
 
     def calculate_transect_spacing(
         self,
@@ -347,15 +352,16 @@ class SurveyPlanner:
             survey_width = max_east - min_east
             num_transects = int(survey_width / spacing) + 2
             baseline_north = (max_north + min_north) / 2
+            baseline_east = (max_east + min_east) / 2
 
             for i in range(num_transects):
                 offset = (i - num_transects / 2) * spacing
 
-                line_start = LocalCoord(baseline_north - 1000, min_east + offset)
-                line_end = LocalCoord(baseline_north + 1000, min_east + offset)
+                line_start = LocalCoord(baseline_north - 1000, baseline_east + offset)
+                line_end = LocalCoord(baseline_north + 1000, baseline_east + offset)
 
                 if config.grid_angle_deg != 0:
-                    center = LocalCoord(baseline_north, min_east + offset)
+                    center = LocalCoord(baseline_north, baseline_east + offset)
                     line_start = self._rotate_point(line_start, center, angle_rad)
                     line_end = self._rotate_point(line_end, center, angle_rad)
 
@@ -370,16 +376,17 @@ class SurveyPlanner:
             # East-West lines
             survey_height = max_north - min_north
             num_transects = int(survey_height / spacing) + 2
+            baseline_north = (max_north + min_north) / 2
             baseline_east = (max_east + min_east) / 2
 
             for i in range(num_transects):
                 offset = (i - num_transects / 2) * spacing
 
-                line_start = LocalCoord(min_north + offset, baseline_east - 1000)
-                line_end = LocalCoord(min_north + offset, baseline_east + 1000)
+                line_start = LocalCoord(baseline_north + offset, baseline_east - 1000)
+                line_end = LocalCoord(baseline_north + offset, baseline_east + 1000)
 
                 if config.grid_angle_deg != 0:
-                    center = LocalCoord(min_north + offset, baseline_east)
+                    center = LocalCoord(baseline_north + offset, baseline_east)
                     line_start = self._rotate_point(line_start, center, angle_rad)
                     line_end = self._rotate_point(line_end, center, angle_rad)
 
@@ -391,14 +398,14 @@ class SurveyPlanner:
                     intersections.sort(key=lambda p: p.east)
                     transects_local.append(intersections)
 
-        # Validate edge coverage
-        coverage_result = PolygonUtils.validate_edge_coverage(
-            local_polygon, transects_local, min_coverage_m=spacing/2
+        # Validate edge coverage with recursive validation
+        coverage_result = self._recursive_edge_coverage_validation(
+            local_polygon, transects_local, spacing, max_depth=3
         )
 
         if not coverage_result['valid']:
             warnings.warn(
-                f"Edge coverage validation failed. "
+                f"Edge coverage validation failed after recursive attempts. "
                 f"Problem edges: {coverage_result['problem_edges']}. "
                 f"Max distance from edge: {coverage_result['max_edge_distance']:.1f}m"
             )
@@ -432,25 +439,131 @@ class SurveyPlanner:
     ) -> List[LatLon]:
         """
         Apply terrain-following altitude adjustment to transect.
-        
+
         Args:
             transect: List of waypoint coordinates
             altitude_agl: Desired altitude above ground level
             terrain_provider: Function that returns terrain elevation
-        
+
         Returns:
             Transect with terrain-adjusted altitudes (stored in LatLon for now)
         """
         # Note: This stores terrain data alongside coordinates
         # In actual implementation, waypoints would have altitude field
         adjusted_transect = []
-        
+
         for coord in transect:
             terrain_elevation = self.get_terrain_altitude(coord, terrain_provider)
             # Store adjusted coordinate (altitude would be in mission item)
             adjusted_transect.append(coord)
-        
+
         return adjusted_transect
+
+    def _recursive_edge_coverage_validation(
+        self,
+        polygon: List[LocalCoord],
+        transects: List[List[LocalCoord]],
+        spacing: float,
+        depth: int = 0,
+        max_depth: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Recursively validate and fix edge coverage issues.
+
+        Algorithm:
+        1. Validate current edge coverage
+        2. If invalid and depth < max_depth:
+           - Identify problem edges
+           - Generate additional transects near problem edges
+           - Recursively validate with new transects
+        3. Return final validation result
+
+        Args:
+            polygon: Survey polygon in local coordinates
+            transects: List of transects (each transect is list of points)
+            spacing: Transect spacing in meters
+            depth: Current recursion depth
+            max_depth: Maximum recursion depth
+
+        Returns:
+            Validation result dictionary with 'valid', 'problem_edges', 'max_edge_distance'
+        """
+        # Validate current coverage
+        min_coverage = spacing / 2
+        result = PolygonUtils.validate_edge_coverage(polygon, transects, min_coverage_m=min_coverage)
+
+        # If valid or max depth reached, return
+        if result['valid'] or depth >= max_depth:
+            return result
+
+        # Identify problem edges and add補充 transects
+        problem_edges = result.get('problem_edges', [])
+
+        if not problem_edges:
+            return result
+
+        # Add transects near problem edges
+        new_transects = []
+        for edge_idx in problem_edges:
+            # Get edge endpoints
+            if edge_idx >= len(polygon):
+                continue
+
+            p1 = polygon[edge_idx]
+            p2 = polygon[(edge_idx + 1) % len(polygon)]
+
+            # Calculate edge midpoint
+            mid_north = (p1.north + p2.north) / 2
+            mid_east = (p1.east + p2.east) / 2
+
+            # Calculate edge normal direction
+            edge_north = p2.north - p1.north
+            edge_east = p2.east - p1.east
+            edge_len = math.sqrt(edge_north**2 + edge_east**2)
+
+            if edge_len < 0.1:
+                continue
+
+            # Normal vector (perpendicular to edge, pointing inward)
+            normal_north = -edge_east / edge_len
+            normal_east = edge_north / edge_len
+
+            # Create transect perpendicular to problem edge
+            # Extend from edge inward by spacing distance
+            offset_distance = spacing * 0.5  # Half spacing for better coverage
+
+            transect_start = LocalCoord(
+                mid_north + normal_north * offset_distance,
+                mid_east + normal_east * offset_distance
+            )
+
+            # Extend transect in both directions along edge direction
+            transect_points = []
+            for t in [-1000, 1000]:  # Extend far in both directions
+                point = LocalCoord(
+                    transect_start.north + (edge_north / edge_len) * t,
+                    transect_start.east + (edge_east / edge_len) * t
+                )
+                transect_points.append(point)
+
+            # Find intersections with polygon
+            intersections = PolygonUtils.polygon_line_intersections(
+                polygon, transect_points[0], transect_points[1]
+            )
+
+            if len(intersections) >= 2:
+                new_transects.append(intersections)
+
+        if new_transects:
+            # Add new transects to existing ones
+            all_transects = transects + new_transects
+
+            # Recursive validation
+            return self._recursive_edge_coverage_validation(
+                polygon, all_transects, spacing, depth + 1, max_depth
+            )
+
+        return result
 
     def _rotate_point(self, point: LocalCoord, center: LocalCoord, angle_rad: float) -> LocalCoord:
         """Rotate point around center."""
@@ -611,7 +724,7 @@ class SurveyPlanner:
                     "param1": 0.0,  # Hold time
                     "param2": 2.0,  # Acceptance radius
                     "param3": 0.0,  # Pass radius
-                    "param4": float("nan"),  # Yaw
+                    "param4": 0.0,  # Yaw angle (0 = use current heading)
                     "x": int(coord.lat * 1e7),
                     "y": int(coord.lon * 1e7),
                     "z": float(config.altitude_m),

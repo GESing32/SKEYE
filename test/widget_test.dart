@@ -6,10 +6,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:custom_gcs_serial/main.dart';
 
 void main() {
+  // Helper to create app with WebSocket disabled for testing
+  Widget createTestApp() {
+    return MaterialApp(
+      title: 'Custom GCS (Serial)',
+      theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
+      home: const GcsHome(enableWebSocket: false),
+    );
+  }
+
   group('GcsApp Widget Tests', () {
     testWidgets('App loads with correct title', (WidgetTester tester) async {
       // Build the GCS app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
 
       // Verify app title is present in AppBar
       expect(find.text('Custom GCS (Serial)'), findsOneWidget);
@@ -17,7 +26,7 @@ void main() {
 
     testWidgets('App shows disconnected link icon initially', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Should show link_off icon when not connected
@@ -26,7 +35,7 @@ void main() {
 
     testWidgets('Control buttons are present', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Verify main control buttons exist
@@ -37,7 +46,7 @@ void main() {
 
     testWidgets('Status bar shows telemetry fields', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Verify telemetry fields are displayed
@@ -52,7 +61,7 @@ void main() {
 
     testWidgets('Mission control buttons are initially disabled', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Find upload and start buttons
@@ -72,7 +81,7 @@ void main() {
 
     testWidgets('Mission edit toggle works', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Find and tap mission edit chip
@@ -94,7 +103,7 @@ void main() {
 
     testWidgets('Mode menu button exists and opens popup', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Find mode button
@@ -114,7 +123,7 @@ void main() {
 
     testWidgets('Connection indicator is visible', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Verify connection status icon is visible (starts disconnected)
@@ -127,7 +136,7 @@ void main() {
 
     testWidgets('Clear waypoints button exists in mission mode', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Enable mission edit mode
@@ -141,7 +150,7 @@ void main() {
 
     testWidgets('Waypoint counter displays initially zero', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Enable mission edit mode
@@ -155,7 +164,7 @@ void main() {
 
     testWidgets('All flight control buttons are enabled', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Find control buttons
@@ -180,7 +189,7 @@ void main() {
 
     testWidgets('Status bar has all telemetry indicators', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Verify all telemetry indicators are present
@@ -201,7 +210,7 @@ void main() {
 
     testWidgets('Altitude indicator displays meters unit', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Verify altitude has meters unit
@@ -211,7 +220,7 @@ void main() {
 
     testWidgets('Speed indicator displays m/s unit', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Verify speed has m/s unit
@@ -221,7 +230,7 @@ void main() {
 
     testWidgets('Battery indicator displays voltage unit', (WidgetTester tester) async {
       // Build the app
-      await tester.pumpWidget(const GcsApp());
+      await tester.pumpWidget(createTestApp());
       await tester.pump();
 
       // Verify battery has voltage unit

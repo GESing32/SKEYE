@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import math
 import time
 from typing import Any, Dict, List, Optional
 
@@ -52,6 +53,8 @@ class MavSerialCore:
         self._mission_upload_in_progress: bool = False
         self._mission_items_int: Dict[int, Dict[str, Any]] = {}
         self._mission_expected_count: int = 0
+        self._last_mission_ack: Optional[Dict[str, Any]] = None
+        self._mission_ack_received: bool = False
 
     # -------- Link / heartbeat --------
     def wait_heartbeat(self, timeout: float = 30.0):
@@ -113,6 +116,14 @@ class MavSerialCore:
             0, 0, 0, 0, 0, 0
         )
 
+    def get_armed_status(self):
+        """Check if vehicle is armed from HEARTBEAT message"""
+        msg = self.mav.recv_match(type='HEARTBEAT', blocking=False)
+        if msg:
+            armed = msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
+            return bool(armed)
+        return False
+    
     def rtl(self):
         self.set_mode("RTL")
 
@@ -122,7 +133,8 @@ class MavSerialCore:
         self.set_mode("GUIDED")
         # Position-only mask
         type_mask = 0b111111111000
-        yaw = float("nan") if yaw_deg is None else float(yaw_deg) * 3.141592653589793 / 180.0
+        yaw = float("nan") if yaw_deg is None else math.radians(yaw_deg)
+        yaw_rate = 0.0 if yaw_deg is not None else float("nan")  # Fixed: proper yaw_rate handling
         self.m.mav.set_position_target_global_int_send(
             0,
             self.target_system,
@@ -133,7 +145,8 @@ class MavSerialCore:
             int(lon_deg * 1e7),
             float(alt_rel_m),
             0, 0, 0, 0, 0, 0,
-            yaw
+            yaw,
+            yaw_rate
         )
 
     def set_speed(self, m_s: float):
@@ -227,20 +240,149 @@ class MavSerialCore:
         self.m.mav.mission_clear_all_send(self.target_system, self.target_component)
 
     def mission_start(self, first_item: int = 0, last_item: int = 0xFFFF):
-        self._ensure_targets()
-        self.m.mav.command_long_send(
-            self.target_system, self.target_component,
-            mavutil.mavlink.MAV_CMD_MISSION_START, 0,
-            first_item, last_item, 0, 0, 0, 0, 0
-        )
+        """Start mission by arming vehicle and switching to AUTO mode.
 
-    def mission_upload_begin(self, items_int: List[Dict[str, Any]]):
+        In ArduPilot, missions require the vehicle to be armed and in AUTO mode.
+        IMPORTANT: ArduPilot does NOT allow arming in AUTO mode directly.
+        This function:
+        1. Checks if armed; if not, switches to GUIDED mode and arms
+        2. Switches to AUTO mode to start the mission
+        """
         self._ensure_targets()
+
+        # Check if already armed
+        if not self.armed:
+            self.log.info("Vehicle not armed. Arming in GUIDED mode first...")
+            # Switch to GUIDED mode first (AUTO mode doesn't allow arming)
+            self.set_mode("GUIDED")
+            # Give mode change time to process
+            import time
+            time.sleep(0.5)
+            # Now ARM
+            self.arm(should_arm=True)
+            # Wait for arm to complete
+            time.sleep(1.5)
+        else:
+            self.log.info("Vehicle already armed, proceeding to AUTO")
+
+        # Now set mode to AUTO to start the mission
+        self.log.info("Switching to AUTO mode to start mission")
+        self.set_mode("AUTO")
+
+    def _wait_for_ack(self, timeout: float = 5.0) -> Optional[Dict[str, Any]]:
+        """
+        Wait for MISSION_ACK message from vehicle.
+
+        Args:
+            timeout: Maximum time to wait for ACK (seconds)
+
+        Returns:
+            ACK message dict if received, None on timeout
+        """
+        self._mission_ack_received = False
+        self._last_mission_ack = None
+        start_time = now_s()
+
+        while (now_s() - start_time) < timeout:
+            msg = self.m.recv_match(type='MISSION_ACK', blocking=False, timeout=0.1)
+            if msg:
+                self._last_mission_ack = msg.to_dict()
+                self._mission_ack_received = True
+                return self._last_mission_ack
+
+        return None
+
+    def _wait_for_mission_count(self, timeout: float = 5.0) -> Optional[int]:
+        """
+        Request and wait for mission count from vehicle.
+
+        Args:
+            timeout: Maximum time to wait for response (seconds)
+
+        Returns:
+            Mission count if received, None on timeout
+        """
+        self._ensure_targets()
+        # Request mission list
+        self.m.mav.mission_request_list_send(self.target_system, self.target_component)
+
+        start_time = now_s()
+        while (now_s() - start_time) < timeout:
+            msg = self.m.recv_match(type='MISSION_COUNT', blocking=False, timeout=0.1)
+            if msg:
+                return msg.count
+
+        return None
+
+    def mission_upload_begin(self, items_int: List[Dict[str, Any]], verify: bool = False, timeout: float = 30.0):
+        """
+        Upload mission items to vehicle with optional verification.
+
+        Args:
+            items_int: List of mission item dictionaries
+            verify: If True, wait for ACK and verify mission count
+            timeout: Total timeout for upload operation (seconds)
+
+        Raises:
+            TimeoutError: If upload times out
+            RuntimeError: If verification fails
+        """
+        self._ensure_targets()
+
+        if not items_int:
+            raise ValueError("Mission items list cannot be empty")
+
         # Normalize items into a dict by sequence
         self._mission_items_int = {int(i["seq"]): i for i in items_int}
         self._mission_expected_count = len(items_int)
         self._mission_upload_in_progress = True
+
+        start_time = now_s()
+
+        # Send mission count
         self.m.mav.mission_count_send(self.target_system, self.target_component, self._mission_expected_count)
+        self.log.info(f"Sent mission count: {self._mission_expected_count} items")
+
+        if verify:
+            # Wait for mission upload to complete (ACK received)
+            upload_timeout = timeout - (now_s() - start_time)
+            if upload_timeout <= 0:
+                raise TimeoutError("Mission upload timed out before completion")
+
+            # Wait for all mission requests and send items
+            # The protocol handler will send items as requests come in
+            # We just need to wait for the final ACK
+            time.sleep(0.5)  # Give time for protocol to process
+
+            # Wait for MISSION_ACK
+            ack = self._wait_for_ack(timeout=upload_timeout)
+
+            if not ack:
+                raise TimeoutError(f"Did not receive MISSION_ACK within {upload_timeout}s")
+
+            # Check ACK type
+            ack_type = ack.get('type', -1)
+            if ack_type != mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                ack_type_name = mavutil.mavlink.enums['MAV_MISSION_RESULT'].get(ack_type, {}).get('name', 'UNKNOWN')
+                raise RuntimeError(f"Mission upload failed with ACK type: {ack_type_name} ({ack_type})")
+
+            self.log.info("Mission upload ACK received: ACCEPTED")
+
+            # Final verification: request mission count back from vehicle
+            count = self._wait_for_mission_count(timeout=5.0)
+
+            if count is None:
+                self.log.warning("Could not verify mission count (timeout)")
+            elif count != self._mission_expected_count:
+                raise RuntimeError(
+                    f"Mission verification failed: expected {self._mission_expected_count} items, "
+                    f"vehicle reports {count} items"
+                )
+            else:
+                self.log.info(f"Mission verification successful: {count}/{self._mission_expected_count} items")
+        else:
+            # Original non-verified upload behavior
+            self.log.info("Mission upload started (no verification)")
 
     def _handle_mission_request(self, msg: Dict[str, Any]):
         if not self._mission_upload_in_progress:
@@ -266,6 +408,7 @@ class MavSerialCore:
             int(item["x"]),
             int(item["y"]),
             float(item["z"]),
+            int(item.get("mission_type", 0)),  # MAV_MISSION_TYPE_MISSION = 0
         )
 
     def _handle_mission_ack(self, _msg: Dict[str, Any]):
