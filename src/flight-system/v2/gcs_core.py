@@ -19,6 +19,8 @@ RELAY_TYPES = {
     "ATTITUDE",
     "HOME_POSITION",
     "MISSION_CURRENT",
+    "STATUSTEXT",  # ArduPilot text messages (pre-arm failures, errors, etc.)
+    "COMMAND_ACK",  # Command acknowledgments (for detecting command failures)
 }
 
 def now_s() -> float:

@@ -108,6 +108,23 @@ class Telemetry {
   double? relAlt;
   double? groundSpeed;
   double? voltage;
+  int? gpsSatellites;  // Number of GPS satellites visible
+  int? gpsFixType;     // GPS fix type (0=No GPS, 1=No Fix, 2=2D, 3=3D, 4=DGPS, 5=RTK)
+}
+
+class SystemMessage {
+  final String message;
+  final MessageSeverity severity;
+  final DateTime timestamp;
+
+  SystemMessage(this.message, this.severity) : timestamp = DateTime.now();
+}
+
+enum MessageSeverity {
+  info,
+  warning,
+  error,
+  critical,
 }
 
 class GcsHome extends StatefulWidget {
@@ -123,6 +140,10 @@ class _GcsHomeState extends State<GcsHome> {
   WebSocketChannel? channel;
   StreamSubscription? sub;
   Timer? _reconnectTimer;
+
+  // System messages and errors
+  List<SystemMessage> systemMessages = [];
+  final int maxMessages = 50;  // Keep last 50 messages for continuous log
 
   String wsUrl = "ws://localhost:8765";
 
@@ -170,6 +191,7 @@ class _GcsHomeState extends State<GcsHome> {
 
       if (type == "HELLO") {
         log.info("Received HELLO from server");
+        log.info("  Mode: ${msg["mode"]}, Armed: ${msg["armed"]}, Link OK: ${msg["link_ok"]}");
         if (mounted) {
           setState(() {
             tel.mode = msg["mode"] ?? "UNKNOWN";
@@ -247,13 +269,22 @@ class _GcsHomeState extends State<GcsHome> {
         final lon = (msg["lon"] ?? 0) / 1e7;
         final alt = (msg["relative_alt"] ?? 0) / 1000.0;
 
-        // Debug: Log position updates (remove after debugging)
-        print("📍 Position: lat=${lat.toStringAsFixed(6)}, lon=${lon.toStringAsFixed(6)}, alt=${alt.toStringAsFixed(1)}m");
-
-        setState(() {
-          tel.pos = LatLng(lat, lon);
-          tel.relAlt = alt;
-        });
+        // Only update position if valid (not 0,0 which indicates no GPS fix)
+        if (lat != 0 && lon != 0) {
+          log.info("📍 GPS Position: lat=${lat.toStringAsFixed(6)}, lon=${lon.toStringAsFixed(6)}, alt=${alt.toStringAsFixed(1)}m");
+          setState(() {
+            tel.pos = LatLng(lat, lon);
+            tel.relAlt = alt;
+          });
+        } else {
+          // Only log once when we don't have a fix (to avoid spam)
+          if (tel.pos != null) {
+            log.warning("⚠️ GPS lost fix - Waiting for GPS lock...");
+            setState(() {
+              tel.pos = null;
+            });
+          }
+        }
       }
     } else if (type == "VFR_HUD") {
       if (mounted) {
@@ -268,10 +299,78 @@ class _GcsHomeState extends State<GcsHome> {
           tel.voltage = vbat > 0 ? vbat : null;
         });
       }
+    } else if (type == "GPS_RAW_INT") {
+      if (mounted) {
+        final satellites = msg["satellites_visible"] ?? 0;
+        final fixType = msg["fix_type"] ?? 0;
+
+        // Detect GPS fix degradation (transition from good to bad)
+        final hadGoodFix = tel.gpsFixType != null && tel.gpsFixType! >= 3;
+        final nowHasBadFix = fixType < 3;
+
+        setState(() {
+          tel.gpsSatellites = satellites;
+          tel.gpsFixType = fixType;
+        });
+
+        // Log when GPS degrades from good fix to bad fix
+        if (hadGoodFix && nowHasBadFix) {
+          _addSystemMessage("GPS fix degraded: ${_getGpsFixTypeName(fixType)} (${satellites} sats)", MessageSeverity.warning);
+        }
+      }
+    } else if (type == "EKF_STATUS_REPORT") {
+      // EKF status flags - check for critical errors
+      final flags = msg["flags"] ?? 0;
+
+      // EKF_ATTITUDE (bit 0) - critical for flight
+      if ((flags & 0x01) == 0 && tel.armed) {
+        _addSystemMessage("⚠️ EKF: Attitude estimate unavailable!", MessageSeverity.critical);
+      }
+
+      // EKF_VELOCITY_HORIZ (bit 1) - critical for position hold
+      if ((flags & 0x02) == 0 && tel.armed) {
+        _addSystemMessage("⚠️ EKF: Horizontal velocity unavailable!", MessageSeverity.warning);
+      }
+
+      // EKF_CONST_POS_MODE (bit 3) - indicates poor GPS
+      if ((flags & 0x08) != 0) {
+        _addSystemMessage("EKF: Using constant position mode (poor GPS)", MessageSeverity.warning);
+      }
+    } else if (type == "STATUSTEXT") {
+      // ArduPilot status text messages
+      final text = msg["text"] ?? "";
+      final severity = msg["severity"] ?? 6; // MAV_SEVERITY_INFO
+
+      // Only show important messages (severity <= 4 is warning or higher)
+      // 0=EMERGENCY, 1=ALERT, 2=CRITICAL, 3=ERROR, 4=WARNING, 5=NOTICE, 6=INFO, 7=DEBUG
+      if (severity <= 4 && text.isNotEmpty) {
+        final msgSeverity = severity <= 2
+            ? MessageSeverity.critical
+            : severity == 3
+                ? MessageSeverity.error
+                : MessageSeverity.warning;
+
+        _addSystemMessage(text, msgSeverity);
+      } else if (text.isNotEmpty) {
+        // Log info messages but don't display
+        log.info("STATUSTEXT: $text");
+      }
+    } else if (type == "COMMAND_ACK") {
+      // Command acknowledgment - check for failures
+      final command = msg["command"] ?? 0;
+      final result = msg["result"] ?? 0;
+
+      // MAV_RESULT: 0=ACCEPTED, 1=TEMPORARILY_REJECTED, 2=DENIED, 3=UNSUPPORTED, 4=FAILED
+      if (result != 0) {
+        final commandName = _getCommandName(command);
+        final resultName = _getCommandResultName(result);
+        _addSystemMessage("Command failed: $commandName ($resultName)", MessageSeverity.error);
+      }
     } else if (type == "ERROR") {
-      // Optionally show a snackbar
       final error = msg["error"] ?? "Unknown error";
+      final command = msg["command"];
       log.error("Server error: $error");
+      _addSystemMessage(command != null ? "Error ($command): $error" : "Error: $error", MessageSeverity.error);
     } else if (type == "SURVEY_GENERATED") {
       // Handle generated survey mission
       log.info("Survey generated successfully");
@@ -305,6 +404,211 @@ class _GcsHomeState extends State<GcsHome> {
               "${stats['flight_time_min']} min");
         }
       }
+    }
+  }
+
+  void _addSystemMessage(String message, MessageSeverity severity) {
+    if (!mounted) return;
+
+    setState(() {
+      systemMessages.insert(0, SystemMessage(message, severity));
+      // Keep only the last N messages
+      if (systemMessages.length > maxMessages) {
+        systemMessages = systemMessages.sublist(0, maxMessages);
+      }
+    });
+
+    log.info("System message [$severity]: $message");
+  }
+
+  String _getGpsFixTypeName(int fixType) {
+    switch (fixType) {
+      case 0: return "No GPS";
+      case 1: return "No Fix";
+      case 2: return "2D Fix";
+      case 3: return "3D Fix";
+      case 4: return "DGPS";
+      case 5: return "RTK Float";
+      case 6: return "RTK Fixed";
+      default: return "Unknown";
+    }
+  }
+
+  String _getCommandName(int command) {
+    // Common MAVLink commands
+    switch (command) {
+      case 16: return "NAV_WAYPOINT";
+      case 22: return "NAV_TAKEOFF";
+      case 176: return "DO_SET_MODE";
+      case 400: return "ARM/DISARM";
+      case 84: return "NAV_GUIDED_ENABLE";
+      default: return "Command $command";
+    }
+  }
+
+  String _getCommandResultName(int result) {
+    switch (result) {
+      case 0: return "Accepted";
+      case 1: return "Temporarily rejected";
+      case 2: return "Denied";
+      case 3: return "Unsupported";
+      case 4: return "Failed";
+      case 5: return "In progress";
+      default: return "Result $result";
+    }
+  }
+
+  Color _getHighestSeverityColor() {
+    if (systemMessages.any((m) => m.severity == MessageSeverity.critical)) {
+      return Colors.red.shade900;
+    } else if (systemMessages.any((m) => m.severity == MessageSeverity.error)) {
+      return Colors.red.shade700;
+    } else if (systemMessages.any((m) => m.severity == MessageSeverity.warning)) {
+      return Colors.orange.shade700;
+    }
+    return Colors.blue.shade700;
+  }
+
+  void _showMessagesDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        child: Container(
+          width: 600,
+          height: 500,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'System Messages',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        icon: const Icon(Icons.clear_all),
+                        label: const Text('Clear All'),
+                        onPressed: () {
+                          setState(() {
+                            systemMessages.clear();
+                          });
+                          Navigator.pop(context);
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const Divider(),
+              if (systemMessages.isEmpty)
+                const Expanded(
+                  child: Center(
+                    child: Text(
+                      'No messages',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ),
+                )
+              else
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: systemMessages.length,
+                    itemBuilder: (context, index) {
+                      final msg = systemMessages[index];
+                      return _buildMessageCard(msg);
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMessageCard(SystemMessage msg) {
+    Color borderColor;
+    IconData icon;
+    Color iconColor;
+
+    switch (msg.severity) {
+      case MessageSeverity.critical:
+        borderColor = Colors.red.shade900;
+        icon = Icons.error;
+        iconColor = Colors.red.shade900;
+        break;
+      case MessageSeverity.error:
+        borderColor = Colors.red.shade700;
+        icon = Icons.error_outline;
+        iconColor = Colors.red.shade700;
+        break;
+      case MessageSeverity.warning:
+        borderColor = Colors.orange.shade700;
+        icon = Icons.warning_amber;
+        iconColor = Colors.orange.shade700;
+        break;
+      case MessageSeverity.info:
+        borderColor = Colors.blue.shade700;
+        icon = Icons.info_outline;
+        iconColor = Colors.blue.shade700;
+        break;
+    }
+
+    final timeAgo = _formatTimeAgo(DateTime.now().difference(msg.timestamp));
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: borderColor, width: 2),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: iconColor, size: 24),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    msg.message,
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$timeAgo - ${msg.severity.name.toUpperCase()}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade400,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatTimeAgo(Duration duration) {
+    if (duration.inSeconds < 60) {
+      return '${duration.inSeconds}s ago';
+    } else if (duration.inMinutes < 60) {
+      return '${duration.inMinutes}m ago';
+    } else {
+      return '${duration.inHours}h ago';
     }
   }
 
@@ -499,6 +803,42 @@ class _GcsHomeState extends State<GcsHome> {
       appBar: AppBar(
         title: const Text('SKEYE Ground Control Station'),
         actions: [
+          // Messages/Errors button with badge
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.notification_important),
+                tooltip: 'System Messages',
+                onPressed: _showMessagesDialog,
+              ),
+              if (systemMessages.isNotEmpty)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: _getHighestSeverityColor(),
+                      shape: BoxShape.circle,
+                    ),
+                    constraints: const BoxConstraints(
+                      minWidth: 16,
+                      minHeight: 16,
+                    ),
+                    child: Text(
+                      '${systemMessages.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+            ],
+          ),
           Icon(tel.linkOk ? Icons.link : Icons.link_off, color: tel.linkOk ? Colors.green : Colors.red),
           const SizedBox(width: 12),
         ],
@@ -506,6 +846,8 @@ class _GcsHomeState extends State<GcsHome> {
       body: Column(
         children: [
           _statusBar(),
+          // Error/Warning Banner
+          if (systemMessages.isNotEmpty) _systemMessagesBanner(),
           Expanded(
             child: FlutterMap(
               mapController: _mapController,
@@ -530,8 +872,28 @@ class _GcsHomeState extends State<GcsHome> {
               ),
               children: [
                 TileLayer(
-                  urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                  // Use subdomain-based load balancing for better performance
+                  urlTemplate: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+                  subdomains: const ['a', 'b', 'c'],
                   userAgentPackageName: 'custom_gcs_serial',
+                  maxNativeZoom: 19,
+                  maxZoom: 22,
+                  // Reduce simultaneous tile loads to avoid overwhelming servers
+                  tileDisplay: const TileDisplay.fadeIn(
+                    duration: Duration(milliseconds: 200),
+                  ),
+                  // Show error placeholder for failed tiles
+                  errorTileCallback: (tile, error, stackTrace) {
+                    log.debug('Tile load error: $error');
+                  },
+                  tileBuilder: (context, widget, tile) {
+                    return DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                      ),
+                      child: widget,
+                    );
+                  },
                 ),
                 PolylineLayer(polylines: polylines),
                 MarkerLayer(markers: markers),
@@ -562,6 +924,20 @@ class _GcsHomeState extends State<GcsHome> {
                   children: [
                     _kv("Mode", tel.mode),
                     _kv("Armed", tel.armed ? "Yes" : "No"),
+                    // GPS status with satellite count
+                    _kvColored(
+                      "GPS",
+                      tel.gpsFixType != null && tel.gpsFixType! >= 3
+                          ? "${_getGpsFixTypeName(tel.gpsFixType!)} (${tel.gpsSatellites ?? 0} sats)"
+                          : tel.gpsFixType != null
+                              ? _getGpsFixTypeName(tel.gpsFixType!)
+                              : "NO DATA",
+                      tel.gpsFixType != null && tel.gpsFixType! >= 3
+                          ? Colors.green
+                          : tel.gpsFixType != null && tel.gpsFixType! >= 2
+                              ? Colors.orange
+                              : Colors.red,
+                    ),
                     _kv("Lat", tel.pos?.latitude.toStringAsFixed(6) ?? "-"),
                     _kv("Lon", tel.pos?.longitude.toStringAsFixed(6) ?? "-"),
                     _kv("Alt rel (m)", tel.relAlt?.toStringAsFixed(1) ?? "-"),
@@ -573,6 +949,85 @@ class _GcsHomeState extends State<GcsHome> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _systemMessagesBanner() {
+    // Show only the most severe message
+    final criticalMessages = systemMessages.where((m) => m.severity == MessageSeverity.critical).toList();
+    final errorMessages = systemMessages.where((m) => m.severity == MessageSeverity.error).toList();
+    final warningMessages = systemMessages.where((m) => m.severity == MessageSeverity.warning).toList();
+
+    SystemMessage? displayMessage;
+    if (criticalMessages.isNotEmpty) {
+      displayMessage = criticalMessages.first;
+    } else if (errorMessages.isNotEmpty) {
+      displayMessage = errorMessages.first;
+    } else if (warningMessages.isNotEmpty) {
+      displayMessage = warningMessages.first;
+    } else if (systemMessages.isNotEmpty) {
+      displayMessage = systemMessages.first;
+    }
+
+    if (displayMessage == null) return const SizedBox.shrink();
+
+    Color bgColor;
+    IconData icon;
+    switch (displayMessage.severity) {
+      case MessageSeverity.critical:
+        bgColor = Colors.red.shade900;
+        icon = Icons.error;
+        break;
+      case MessageSeverity.error:
+        bgColor = Colors.red.shade800;
+        icon = Icons.error_outline;
+        break;
+      case MessageSeverity.warning:
+        bgColor = Colors.orange.shade800;
+        icon = Icons.warning_amber;
+        break;
+      case MessageSeverity.info:
+        bgColor = Colors.blue.shade800;
+        icon = Icons.info_outline;
+        break;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      color: bgColor,
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.white, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              displayMessage.message,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          if (systemMessages.length > 1)
+            Text(
+              "+${systemMessages.length - 1} more",
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
+            ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.close, color: Colors.white, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            onPressed: () {
+              setState(() {
+                systemMessages.clear();
+              });
+            },
+          ),
+        ],
       ),
     );
   }
@@ -820,6 +1275,16 @@ class _GcsHomeState extends State<GcsHome> {
       children: [
         Text("$k: ", style: const TextStyle(fontWeight: FontWeight.bold)),
         Text(v),
+      ],
+    );
+  }
+
+  Widget _kvColored(String k, String v, Color color) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text("$k: ", style: const TextStyle(fontWeight: FontWeight.bold)),
+        Text(v, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
       ],
     );
   }

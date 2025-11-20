@@ -143,7 +143,18 @@ class WebSocketHub:
         msg_type = new_data.get("type")
 
         # Always broadcast critical message types
-        critical_types = {"HEARTBEAT", "SYS_STATUS", "MISSION_CURRENT", "MISSION_ACK", "STATE_UPDATE", "ACK", "ERROR"}
+        # STATUSTEXT and COMMAND_ACK must always be sent to capture every error occurrence
+        critical_types = {
+            "HEARTBEAT",
+            "SYS_STATUS",
+            "MISSION_CURRENT",
+            "MISSION_ACK",
+            "STATE_UPDATE",
+            "ACK",
+            "ERROR",
+            "STATUSTEXT",      # Always send - user needs every error message
+            "COMMAND_ACK",     # Always send - every command failure must be logged
+        }
         if msg_type in critical_types:
             return True
 

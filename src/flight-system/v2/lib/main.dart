@@ -205,8 +205,28 @@ class _GcsHomeState extends State<GcsHome> {
               ),
               children: [
                 TileLayer(
-                  urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                  // Use subdomain-based load balancing for better performance
+                  urlTemplate: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+                  subdomains: const ['a', 'b', 'c'],
                   userAgentPackageName: 'custom_gcs_serial',
+                  maxNativeZoom: 19,
+                  maxZoom: 22,
+                  // Reduce simultaneous tile loads to avoid overwhelming servers
+                  tileDisplay: const TileDisplay.fadeIn(
+                    duration: Duration(milliseconds: 200),
+                  ),
+                  // Show error placeholder for failed tiles
+                  errorTileCallback: (tile, error, stackTrace) {
+                    debugPrint('Tile load error: $error');
+                  },
+                  tileBuilder: (context, widget, tile) {
+                    return DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                      ),
+                      child: widget,
+                    );
+                  },
                 ),
                 PolylineLayer(polylines: polylines),
                 MarkerLayer(markers: markers),
