@@ -320,39 +320,102 @@ async def handle_client(websocket, core: MavSerialCore, hub: WebSocketHub):
                 command = data.get("command")
                 
                 if command == "arm":
-                    force = data.get("force", True)
-                    core.arm(should_arm=True)
-                    log.info(f"ARM command executed")
+                    force = data.get("force", False)
+                    log.info(f"ARM command received (force={force})")
 
-                    # Send ACK to requesting client
-                    await websocket.send(json.dumps({
-                        "type": "ACK",
-                        "command": "arm",
-                        "success": True
-                    }))
+                    # Send arm command
+                    core.arm(should_arm=True, force=force)
 
-                    # Broadcast state change to all clients (no batching for immediate delivery)
-                    await hub.broadcast({
-                        "type": "STATE_UPDATE",
-                        "armed": True
-                    }, batch=False)
+                    # Wait for COMMAND_ACK from vehicle
+                    loop = asyncio.get_event_loop()
+                    ack = await loop.run_in_executor(
+                        None,
+                        core._wait_for_command_ack,
+                        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                        5.0
+                    )
+
+                    if ack and ack.get('result') == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                        log.info("✓ ARM command accepted by vehicle")
+                        # Send ACK to requesting client
+                        await websocket.send(json.dumps({
+                            "type": "ACK",
+                            "command": "arm",
+                            "success": True
+                        }))
+
+                        # Broadcast state change to all clients
+                        await hub.broadcast({
+                            "type": "STATE_UPDATE",
+                            "armed": True
+                        }, batch=False)
+                    else:
+                        # Command failed
+                        if ack:
+                            result = ack.get('result', -1)
+                            try:
+                                result_name = mavutil.mavlink.enums['MAV_RESULT'][result].name
+                            except (KeyError, AttributeError):
+                                result_name = f'UNKNOWN_{result}'
+                        else:
+                            result_name = 'TIMEOUT'
+                        log.error(f"✗ ARM command failed: {result_name}")
+
+                        await websocket.send(json.dumps({
+                            "type": "ERROR",
+                            "command": "arm",
+                            "success": False,
+                            "error": f"ARM failed: {result_name}"
+                        }))
 
                 elif command == "disarm":
-                    core.arm(should_arm=False)
-                    log.info(f"DISARM command executed")
+                    force = data.get("force", False)
+                    log.info(f"DISARM command received (force={force})")
 
-                    # Send ACK to requesting client
-                    await websocket.send(json.dumps({
-                        "type": "ACK",
-                        "command": "disarm",
-                        "success": True
-                    }))
+                    # Send disarm command
+                    core.arm(should_arm=False, force=force)
 
-                    # Broadcast state change to all clients (no batching for immediate delivery)
-                    await hub.broadcast({
-                        "type": "STATE_UPDATE",
-                        "armed": False
-                    }, batch=False)
+                    # Wait for COMMAND_ACK from vehicle
+                    loop = asyncio.get_event_loop()
+                    ack = await loop.run_in_executor(
+                        None,
+                        core._wait_for_command_ack,
+                        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                        5.0
+                    )
+
+                    if ack and ack.get('result') == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                        log.info("✓ DISARM command accepted by vehicle")
+                        # Send ACK to requesting client
+                        await websocket.send(json.dumps({
+                            "type": "ACK",
+                            "command": "disarm",
+                            "success": True
+                        }))
+
+                        # Broadcast state change to all clients
+                        await hub.broadcast({
+                            "type": "STATE_UPDATE",
+                            "armed": False
+                        }, batch=False)
+                    else:
+                        # Command failed
+                        if ack:
+                            result = ack.get('result', -1)
+                            try:
+                                result_name = mavutil.mavlink.enums['MAV_RESULT'][result].name
+                            except (KeyError, AttributeError):
+                                result_name = f'UNKNOWN_{result}'
+                        else:
+                            result_name = 'TIMEOUT'
+                        log.error(f"✗ DISARM command failed: {result_name}")
+
+                        await websocket.send(json.dumps({
+                            "type": "ERROR",
+                            "command": "disarm",
+                            "success": False,
+                            "error": f"DISARM failed: {result_name}"
+                        }))
 
                 elif command == "set_mode":
                     mode = data.get("mode", "STABILIZE")
@@ -563,6 +626,71 @@ async def handle_client(websocket, core: MavSerialCore, hub: WebSocketHub):
                         "statistics": statistics
                     })
                     await websocket.send(json.dumps(response))
+
+                elif command == "set_fence_params":
+                    # Set geofence parameters
+                    config = data.get("config", {})
+                    log.info(f"SET_FENCE_PARAMS: {config}")
+
+                    try:
+                        # FENCE_ENABLE (0=disabled, 1=enabled)
+                        core.m.param_set_send(
+                            "FENCE_ENABLE",
+                            1 if config.get("enabled", False) else 0
+                        )
+
+                        # FENCE_TYPE (bitfield: 0=disabled, 1=altitude, 2=circle, 4=polygon, 8=minAltitude)
+                        core.m.param_set_send(
+                            "FENCE_TYPE",
+                            config.get("type", 0)
+                        )
+
+                        # FENCE_ACTION (0=report, 1=RTL, 2=land, 3=smartRTL, 4=brake, 5=smartRTL or land)
+                        core.m.param_set_send(
+                            "FENCE_ACTION",
+                            config.get("action", 0)
+                        )
+
+                        # FENCE_ALT_MAX (max altitude in meters)
+                        core.m.param_set_send(
+                            "FENCE_ALT_MAX",
+                            float(config.get("max_altitude", 100.0))
+                        )
+
+                        # FENCE_RADIUS (circular fence radius in meters)
+                        core.m.param_set_send(
+                            "FENCE_RADIUS",
+                            float(config.get("radius", 300.0))
+                        )
+
+                        # FENCE_MARGIN (margin to fence in meters)
+                        core.m.param_set_send(
+                            "FENCE_MARGIN",
+                            float(config.get("margin", 2.0))
+                        )
+
+                        # FENCE_ALT_MIN (min altitude in meters, if supported)
+                        if config.get("type", 0) & 8:  # Has min altitude type
+                            core.m.param_set_send(
+                                "FENCE_ALT_MIN",
+                                float(config.get("min_altitude", -10.0))
+                            )
+
+                        log.info("✓ Fence parameters sent to vehicle")
+
+                        await websocket.send(json.dumps({
+                            "type": "ACK",
+                            "command": "set_fence_params",
+                            "success": True
+                        }))
+
+                    except Exception as e:
+                        log.error(f"Failed to set fence parameters: {e}")
+                        await websocket.send(json.dumps({
+                            "type": "ERROR",
+                            "command": "set_fence_params",
+                            "error": str(e)
+                        }))
 
                 else:
                     log.warning(f"Unknown command: {command}")

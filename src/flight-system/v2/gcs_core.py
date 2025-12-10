@@ -107,16 +107,55 @@ class MavSerialCore:
         self._ensure_targets()
         self.m.set_mode_apm(mode_str)
 
-    def arm(self, should_arm: bool = True):
+    def arm(self, should_arm: bool = True, force: bool = False):
+        """
+        Arm or disarm the vehicle.
+
+        Args:
+            should_arm: True to arm, False to disarm
+            force: True to force arm/disarm (bypass safety checks), False for normal operation
+        """
         self._ensure_targets()
+        # param1: 1=arm, 0=disarm
+        # param2: 0=normal operation, 21196=force (bypass safety checks)
+        force_value = 21196.0 if force else 0.0
         self.m.mav.command_long_send(
             self.target_system,
             self.target_component,
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             0,
-            1 if should_arm else 0,
-            0, 0, 0, 0, 0, 0
+            1.0 if should_arm else 0.0,
+            force_value,
+            0, 0, 0, 0, 0
         )
+
+    def _wait_for_command_ack(self, command: int, timeout: float = 5.0) -> Optional[Dict[str, Any]]:
+        """
+        Wait for COMMAND_ACK message for a specific command.
+
+        Args:
+            command: MAVLink command ID to wait for ACK (e.g., MAV_CMD_COMPONENT_ARM_DISARM)
+            timeout: Maximum time to wait for ACK (seconds)
+
+        Returns:
+            ACK message dict if received, None on timeout
+        """
+        start_time = now_s()
+
+        while (now_s() - start_time) < timeout:
+            msg = self.m.recv_match(type='COMMAND_ACK', blocking=False, timeout=0.1)
+            if msg and msg.command == command:
+                ack_dict = msg.to_dict()
+                result = ack_dict.get('result', -1)
+                try:
+                    result_name = mavutil.mavlink.enums['MAV_RESULT'][result].name
+                except (KeyError, AttributeError):
+                    result_name = f'UNKNOWN_{result}'
+                self.log.info(f"COMMAND_ACK received for cmd={command}: {result_name} ({result})")
+                return ack_dict
+
+        self.log.warning(f"COMMAND_ACK timeout for cmd={command} after {timeout}s")
+        return None
 
     def get_armed_status(self):
         """Check if vehicle is armed from HEARTBEAT message"""

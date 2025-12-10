@@ -6,6 +6,8 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'widgets/fence_config_panel.dart';
+
 // Logging utility similar to Python's logging module
 class Logger {
   final String name;
@@ -162,6 +164,10 @@ class _GcsHomeState extends State<GcsHome> {
   double surveyFrontOverlap = 75.0;  // Front overlap percentage
   double surveySideOverlap = 75.0;  // Side overlap percentage
   double surveyGridAngle = 0.0;  // Grid angle in degrees (0 = N-S, 90 = E-W)
+
+  // Fence configuration
+  bool showFencePanel = false;
+  FenceConfig fenceConfig = const FenceConfig();
 
   LatLng defaultCenter = const LatLng(38.0308, -84.506);
   LatLng get mapCenter => tel.pos ?? defaultCenter;
@@ -768,6 +774,14 @@ class _GcsHomeState extends State<GcsHome> {
     });
   }
 
+  void _applyFenceConfig() {
+    log.info("Applying fence configuration: ${fenceConfig.toJson()}");
+    _send({
+      "command": "set_fence_params",
+      "config": fenceConfig.toJson(),
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final markers = <Marker>[
@@ -849,7 +863,9 @@ class _GcsHomeState extends State<GcsHome> {
           // Error/Warning Banner
           if (systemMessages.isNotEmpty) _systemMessagesBanner(),
           Expanded(
-            child: FlutterMap(
+            child: Stack(
+              children: [
+                FlutterMap(
               mapController: _mapController,
               options: MapOptions(
                 initialCenter: mapCenter,
@@ -897,6 +913,27 @@ class _GcsHomeState extends State<GcsHome> {
                 ),
                 PolylineLayer(polylines: polylines),
                 MarkerLayer(markers: markers),
+              ],
+                ),
+                // Fence configuration panel overlay
+                if (showFencePanel)
+                  Positioned(
+                    right: 16,
+                    top: 16,
+                    bottom: 80,
+                    width: 420,
+                    child: SingleChildScrollView(
+                      child: FenceConfigPanel(
+                        config: fenceConfig,
+                        onConfigChanged: (config) {
+                          setState(() {
+                            fenceConfig = config;
+                          });
+                        },
+                        onApply: _applyFenceConfig,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -1147,6 +1184,26 @@ class _GcsHomeState extends State<GcsHome> {
                         : null,
                     child: const Text("Clear"),
                   ),
+                  const SizedBox(width: 6),
+                  ElevatedButton(
+                    onPressed: () {
+                      setState(() {
+                        showFencePanel = !showFencePanel;
+                      });
+                    },
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      backgroundColor: showFencePanel ? Colors.orange.shade800 : null,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.fence, size: 18),
+                        const SizedBox(width: 4),
+                        const Text("Fence"),
+                      ],
+                    ),
+                  ),
                 ] else ...[
                   // Full style for wider screens
                   ElevatedButton.icon(
@@ -1236,6 +1293,19 @@ class _GcsHomeState extends State<GcsHome> {
                         ? (surveyMode ? _surveyClear : _missionClear)
                         : null,
                     child: const Text("Clear"),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        showFencePanel = !showFencePanel;
+                      });
+                    },
+                    icon: const Icon(Icons.fence),
+                    label: const Text("Geofence"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: showFencePanel ? Colors.orange.shade800 : null,
+                    ),
                   ),
                 ],
               ],
