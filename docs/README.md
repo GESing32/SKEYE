@@ -164,6 +164,7 @@ Full guide: [User Guide - SITL Testing](USER_GUIDE.md#sitl-testing)
 - [ArduPilot Documentation](https://ardupilot.org/)
 - [MAVLink Protocol](https://mavlink.io/)
 - [Flutter Documentation](https://docs.flutter.dev/)
+- [QGroundControl](https://docs.qgroundcontrol.com/)
 
 ---
 
